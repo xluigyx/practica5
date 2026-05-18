@@ -24,12 +24,15 @@ app.post('/api/iot/simular', async (req, res) => {
   res.json(r);
 });
 
+// Iniciar servidor inmediatamente para pasar los Healthchecks de Docker
+app.listen(PORT, () => {
+  console.log(`[API] Servidor Express corriendo en puerto ${PORT}`);
+});
+
 async function main() {
   try {
     await connect();
     await initKafka();
-
-    app.listen(PORT, () => {
       console.log(`
 ╔══════════════════════════════════════════════╗
 ║  SEMAPA API — Puerto ${PORT}                     ║
@@ -47,7 +50,7 @@ async function main() {
 ║  GET  /api/lecturas/:serie?periodo=2025-05   ║
 ║  POST /api/iot/simular  { n: 1000 }         ║
 ╚══════════════════════════════════════════════╝`);
-    });
+      // startup logo printed
   } catch (err) {
     console.error('[FATAL]', err.message);
     process.exit(1);

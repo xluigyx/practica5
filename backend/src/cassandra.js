@@ -17,7 +17,7 @@ const client = new cassandra.Client({
   socketOptions: { connectTimeout: 15000 },
 });
 
-async function connect(retries = 10) {
+async function connect(retries = 40) {
   for (let i = 1; i <= retries; i++) {
     try {
       await client.connect();
