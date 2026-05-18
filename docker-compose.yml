@@ -1,0 +1,171 @@
+version: '3.8'
+
+# ============================================================
+# SEMAPA COCHABAMBA — Infraestructura Distribuida
+# Cassandra 2-nodos + Kafka + Node.js API + React Frontend
+# Iniciar: docker-compose up --build -d
+# ============================================================
+
+networks:
+  semapa-net:
+    driver: bridge
+
+volumes:
+  cassandra-data-1:
+  cassandra-data-2:
+  kafka-data:
+
+services:
+
+  # ── Cassandra Node 1 (seed) ──────────────────────────────
+  cassandra-1:
+    image: cassandra:4.1
+    container_name: semapa-cassandra-1
+    hostname: cassandra-1
+    networks: [semapa-net]
+    ports:
+      - "9042:9042"
+    volumes:
+      - cassandra-data-1:/var/lib/cassandra
+      - ./backend/cassandra/init.cql:/docker-entrypoint-initdb.d/init.cql:ro
+    environment:
+      CASSANDRA_CLUSTER_NAME: SemapaCluster
+      CASSANDRA_DC: datacenter1
+      CASSANDRA_RACK: rack1
+      CASSANDRA_ENDPOINT_SNITCH: GossipingPropertyFileSnitch
+      MAX_HEAP_SIZE: 512M
+      HEAP_NEWSIZE: 128M
+    healthcheck:
+      test: ["CMD", "cqlsh", "-e", "describe keyspaces"]
+      interval: 30s
+      timeout: 10s
+      retries: 10
+      start_period: 60s
+
+  # ── Cassandra Node 2 ─────────────────────────────────────
+  cassandra-2:
+    image: cassandra:4.1
+    container_name: semapa-cassandra-2
+    hostname: cassandra-2
+    networks: [semapa-net]
+    ports:
+      - "9043:9042"
+    volumes:
+      - cassandra-data-2:/var/lib/cassandra
+    environment:
+      CASSANDRA_CLUSTER_NAME: SemapaCluster
+      CASSANDRA_DC: datacenter1
+      CASSANDRA_RACK: rack1
+      CASSANDRA_SEEDS: cassandra-1
+      CASSANDRA_ENDPOINT_SNITCH: GossipingPropertyFileSnitch
+      MAX_HEAP_SIZE: 512M
+      HEAP_NEWSIZE: 128M
+    depends_on:
+      cassandra-1:
+        condition: service_healthy
+
+  # ── Cassandra Init (aplica schema + seed data) ───────────
+  cassandra-init:
+    image: cassandra:4.1
+    container_name: semapa-cassandra-init
+    networks: [semapa-net]
+    volumes:
+      - ./backend/cassandra/init.cql:/init.cql:ro
+      - ./backend/cassandra/seed.cql:/seed.cql:ro
+    depends_on:
+      cassandra-1:
+        condition: service_healthy
+    command: >
+      bash -c "
+        echo 'Waiting for Cassandra cluster...' &&
+        sleep 20 &&
+        cqlsh cassandra-1 9042 -f /init.cql &&
+        cqlsh cassandra-1 9042 -f /seed.cql &&
+        echo 'Schema and seed data applied.'
+      "
+    restart: on-failure
+
+  # ── Zookeeper (requerido por Kafka) ──────────────────────
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.5.0
+    container_name: semapa-zookeeper
+    networks: [semapa-net]
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+    healthcheck:
+      test: ["CMD", "echo", "ruok", "|", "nc", "localhost", "2181"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+
+  # ── Apache Kafka ─────────────────────────────────────────
+  kafka:
+    image: confluentinc/cp-kafka:7.5.0
+    container_name: semapa-kafka
+    networks: [semapa-net]
+    ports:
+      - "29092:29092"
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9092,PLAINTEXT_HOST://0.0.0.0:29092
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092,PLAINTEXT_HOST://localhost:29092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+    depends_on:
+      zookeeper:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "kafka-broker-api-versions", "--bootstrap-server", "kafka:9092"]
+      interval: 20s
+      timeout: 10s
+      retries: 5
+      start_period: 40s
+
+  # ── Backend API (Node.js/Express) ────────────────────────
+  api:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: semapa-api
+    networks: [semapa-net]
+    ports:
+      - "4000:4000"
+    environment:
+      NODE_ENV: production
+      PORT: 4000
+      CASSANDRA_HOSTS: cassandra-1,cassandra-2
+      CASSANDRA_KEYSPACE: semapa
+      CASSANDRA_DC: datacenter1
+      KAFKA_BROKERS: kafka:9092
+      CORS_ORIGIN: http://localhost:3000
+    depends_on:
+      cassandra-1:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:4000/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  # ── Frontend (React/Vite → Nginx) ─────────────────────────
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: semapa-frontend
+    networks: [semapa-net]
+    ports:
+      - "3000:80"
+    environment:
+      VITE_API_URL: http://localhost:4000
+    depends_on:
+      api:
+        condition: service_healthy
+    restart: unless-stopped
