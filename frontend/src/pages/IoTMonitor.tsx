@@ -1,224 +1,297 @@
-import React from 'react';
-import { 
-  WifiOff, 
-  Gauge, 
-  Radio, 
-  CloudRain, 
-  Search, 
-  Bell, 
-  HelpCircle, 
-  User, 
-  Layout, 
-  Router,
-  Signal,
-  CheckCircle2,
-  AlertCircle
-} from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell, RadarChart, PolarGrid, PolarAngleAxis, Radar, AreaChart, Area } from 'recharts';
+import { Cpu, WifiOff, AlertTriangle, Activity, Radio, RefreshCw, Zap, Wrench } from 'lucide-react';
 import { cn } from '@/src/lib/utils';
+import { MODELOS_STATS, RADIOBASES, PROYECCION_5A } from '@/src/lib/semapa-data';
+import type { ModeloMedidor, ModeloStats } from '@/src/lib/types';
 
-const METRICS = [
-  { label: 'Medidores Inactivos', value: '1,402', change: '2.4%', changeType: 'error', icon: WifiOff, sub: 'Últimas 24 horas' },
-  { label: 'Latencia de Ingesta', value: '420ms', change: 'Óptimo', changeType: 'success', icon: Gauge, sub: 'Promedio de flujo Kafka' },
-  { label: 'Error de Interferencia', value: '0.07%', change: 'Estable', changeType: 'neutral', icon: Signal, sub: 'Pérdida de paquetes LoRa' },
-  { label: 'Estado Red IoT', value: '99.98%', highlight: true, icon: CloudRain, sub: 'Uptime operativo mensual' },
-];
+const DarkTip = ({ active, payload, label }: any) => {
+  if (!active || !payload?.length) return null;
+  return (
+    <div className="bg-surface-container-lowest border border-outline-variant rounded-lg p-3 text-xs shadow-xl">
+      <p className="font-bold text-on-surface-variant mb-2">{label}</p>
+      {payload.map((p: any, i: number) => (
+        <p key={i} style={{ color:p.color }} className="font-semibold">
+          {p.name}: <span className="text-on-surface">{p.value?.toLocaleString?.()}</span>
+        </p>
+      ))}
+    </div>
+  );
+};
 
-const DEVICE_HEALTH = [
-  { model: 'ITC 100', category: 'Industrial Smart', failure: '0.02%', battery: '92%', batteryIcon: 'battery-full' },
-  { model: 'Siconia', category: 'LoRa Integrated', failure: '0.45%', battery: '78%', batteryIcon: 'battery-low', urgent: true },
-  { model: 'OY1320', category: 'Residential NB', failure: '0.08%', battery: '45%', batteryIcon: 'battery-low', alert: true },
-  { model: 'WP20', category: 'High Precision', failure: '0.11%', battery: '88%', batteryIcon: 'battery-medium' },
-];
+const MODEL_COLORS: Record<ModeloMedidor, string> = {
+  'ITC 100':'#3b82f6','Siconia':'#06b6d4','OY1320':'#ef4444','WP20':'#10b981','LAIN IoT':'#a78bfa',
+};
+
+// Simula stream LoRaWAN en tiempo real
+function useStream() {
+  const [data, setData] = useState(() =>
+    Array.from({ length: 20 }, (_, i) => {
+      const base = 1400 + Math.round(Math.sin(i) * 200);
+      const dup  = Math.round(base * 0.0007);
+      return { t: `-${20-i}m`, ok: base-dup, dup, err: Math.round(base*0.002) };
+    })
+  );
+  useEffect(() => {
+    const id = setInterval(() => {
+      setData(prev => {
+        const base = 1400 + Math.round(Math.random() * 300);
+        const dup  = Math.round(base * 0.0007);
+        return [...prev.slice(-29), { t:'ahora', ok:base-dup, dup, err:Math.round(base*0.002) }];
+      });
+    }, 3000);
+    return () => clearInterval(id);
+  }, []);
+  return data;
+}
 
 export default function IoTMonitor() {
+  const stream = useStream();
+  const [tick, setTick] = useState(0);
+  const [selModel, setSelModel] = useState<ModeloStats>(MODELOS_STATS[0]);
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    const id = setInterval(() => setTick(t => t+1), 1000);
+    return () => clearInterval(id);
+  }, []);
+
+  const handleModel = (m: ModeloStats) => {
+    setLoading(true);
+    setSelModel(m);
+    setTimeout(() => setLoading(false), 300);
+  };
+
+  const online   = RADIOBASES.filter(r=>r.status==='online').length;
+  const degraded = RADIOBASES.filter(r=>r.status==='degraded').length;
+  const offline  = RADIOBASES.filter(r=>r.status==='offline').length;
+
+  const last     = stream[stream.length-1];
+  const dupRate  = ((last.dup/(last.ok+last.dup+last.err))*100).toFixed(3);
+
+  // Medidores que necesitan mantenimiento: antigüedad >4 años o errores críticos 3/4/5
+  const mantenimiento = MODELOS_STATS.filter(m => m.avgAge > 4 || m.erroresAlimentacion + m.erroresConectividad + m.erroresConfig > 500);
+
+  const radarData = MODELOS_STATS.map(m => ({
+    modelo:      m.modelo,
+    Disponibilidad: parseFloat(((m.activos/m.total)*100).toFixed(1)),
+    Confiabilidad:  parseFloat((100-m.tasaFallo).toFixed(1)),
+    Batería:        m.bateriaPctPromedio,
+    'Anti-Error':   parseFloat((100-(m.erroresAlimentacion+m.erroresConectividad+m.erroresConfig)/m.total*10).toFixed(1)),
+  }));
+
+  const radarSelected = radarData.find(r => r.modelo === selModel.modelo);
+
   return (
-    <div className="flex-1 flex flex-col min-h-screen bg-background animate-in fade-in duration-500">
-      {/* Top Navbar */}
-      <header className="bg-surface-container-lowest border-b border-outline-variant sticky top-0 z-40">
-        <div className="flex justify-between items-center h-20 px-8 max-w-container-max mx-auto">
-          <h2 className="text-2xl font-bold text-primary">Gerencia Técnica: Monitor IoT</h2>
-          <div className="flex items-center gap-6">
-            <div className="relative hidden lg:block">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-outline w-4 h-4" />
-              <input 
-                className="bg-surface-container-low border border-outline-variant rounded-full pl-10 pr-4 py-2 text-sm w-80 focus:ring-2 focus:ring-primary focus:outline-none transition-all" 
-                placeholder="Buscar medidor o gateway..." 
-                type="text"
-              />
-            </div>
-            <div className="flex items-center gap-2">
-              <button className="p-2 rounded-full hover:bg-surface-container-high transition-colors relative">
-                <Bell className="w-5 h-5 text-on-surface-variant" />
-                <span className="absolute top-2 right-2 w-2 h-2 bg-error rounded-full border-2 border-surface-container-lowest" />
-              </button>
-              <button className="p-2 rounded-full hover:bg-surface-container-high transition-colors">
-                <HelpCircle className="w-5 h-5 text-on-surface-variant" />
-              </button>
-              <div className="h-8 w-px bg-outline-variant mx-2" />
-              <div className="flex items-center gap-3 pl-2">
-                <div className="text-right hidden sm:block">
-                  <p className="text-sm font-bold text-on-surface leading-none">Ing. Técnico</p>
-                  <p className="text-[10px] text-on-surface-variant font-bold uppercase tracking-tighter mt-1">Administrativo SEMAPA</p>
-                </div>
-                <div className="w-10 h-10 rounded-full bg-primary-fixed flex items-center justify-center border border-outline-variant shadow-sm">
-                  <User className="w-5 h-5 text-primary" />
-                </div>
-              </div>
-            </div>
-          </div>
+    <div className="p-6 space-y-6 animate-in fade-in duration-500">
+      {/* Header */}
+      <div className="flex items-end justify-between">
+        <div>
+          <span className="text-xs font-bold uppercase tracking-widest" style={{color:'#34d399'}}>Red LoRaWAN · GAMC Cochabamba</span>
+          <h2 className="text-2xl font-bold text-on-surface mt-0.5">Monitor IoT en Tiempo Real</h2>
+          <p className="text-sm text-on-surface-variant">32 Radiobases · 120,000 Medidores · Apache Cassandra</p>
         </div>
-      </header>
-
-      {/* Main Content */}
-      <div className="p-8 space-y-8 max-w-[1600px] mx-auto w-full">
-        {/* Metrics Row */}
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-          {METRICS.map((m, i) => (
-            <div 
-              key={i} 
-              className={cn(
-                "border border-outline-variant p-6 rounded-xl shadow-sm transition-all hover:shadow-md",
-                m.highlight ? "bg-primary text-on-primary border-primary" : "bg-surface-container-lowest"
-              )}
-            >
-              <div className="flex justify-between items-start mb-4">
-                <span className={cn("text-[10px] font-bold uppercase tracking-widest", m.highlight ? "text-primary-fixed" : "text-on-surface-variant")}>
-                  {m.label}
-                </span>
-                <m.icon className={cn("w-6 h-6", m.highlight ? "text-primary-fixed" : "text-primary")} />
-              </div>
-              <div className="flex items-baseline gap-2">
-                <h3 className="text-3xl font-bold">{m.value}</h3>
-                {m.change && (
-                  <span className={cn(
-                    "text-xs font-bold px-2 py-0.5 rounded-full",
-                    m.changeType === 'error' ? "text-error-container bg-error/20" : 
-                    m.changeType === 'success' ? "text-secondary font-bold bg-secondary-container/20" : "text-on-surface-variant"
-                  )}>
-                    {m.change}
-                  </span>
-                )}
-              </div>
-              <p className={cn("text-[11px] mt-2 italic", m.highlight ? "text-primary-fixed/80" : "text-outline")}>{m.sub}</p>
-            </div>
-          ))}
+        <div className="flex items-center gap-3">
+          <span className="flex items-center gap-2 text-xs font-semibold px-3 py-1.5 rounded-lg bg-secondary-container/20 text-secondary border border-secondary/20">
+            <span className="w-2 h-2 bg-secondary rounded-full animate-pulse"/> LIVE · {tick}s
+          </span>
+          <button className="flex items-center gap-2 text-xs px-3 py-1.5 border border-outline-variant rounded-lg text-on-surface-variant hover:border-primary/50 transition-all">
+            <RefreshCw className="w-3.5 h-3.5"/> Reconectar
+          </button>
         </div>
+      </div>
 
-        {/* Map & Health Table */}
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-          {/* Map Area */}
-          <div className="lg:col-span-8 bg-surface-container border border-outline-variant rounded-2xl overflow-hidden relative min-h-[550px] shadow-sm">
-            <img 
-              src="https://lh3.googleusercontent.com/aida-public/AB6AXuDb-ijMzkzVjsSAvuvqrsmPgKYBfIyITrXOoVbVkA7ISpxkxygjVjoDI0QkwQxYvz0R-Y-uF2jiXRVXUMn5qQeO4jXVANhL84ouGH26BxIVS0_20zadzVNd0tmovZBpyqXGqaxkqI2QOdAycIDgl_C9CZ-OFCXDHTIbsrFs84PMoRXv0yHdub0zHh_Xg2IkrWW5JwnWsZNAkw22D47O4zhthoeTUhd76dtKaC6NVaqVT5OyyPvhdCiexBuIXHrGv-N3ELaYaLPpNM5o"
-              className="absolute inset-0 w-full h-full object-cover"
-              alt="Cochabamba Map"
-            />
-            {/* Map Overlay Card */}
-            <div className="absolute top-6 left-6 map-glass p-5 rounded-2xl shadow-2xl max-w-[260px] border-white/20">
-              <h4 className="text-sm font-bold text-primary flex items-center gap-2 mb-4">
-                <Router className="w-4 h-4" />
-                Radiobases LoRaWAN
-              </h4>
-              <div className="space-y-3">
-                <div className="flex justify-between items-center text-xs">
-                  <span className="text-on-surface-variant font-medium">Total Gateways:</span>
-                  <span className="font-bold text-on-surface">32</span>
-                </div>
-                <div className="flex justify-between items-center text-xs">
-                  <span className="text-on-surface-variant font-medium">En Línea:</span>
-                  <span className="text-secondary font-bold">30</span>
-                </div>
-                <div className="flex justify-between items-center text-xs">
-                  <span className="text-on-surface-variant font-medium">Sin Conexión:</span>
-                  <span className="text-error font-bold">2</span>
-                </div>
+      {/* KPIs */}
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+        {[
+          { icon:Radio,         label:'Radiobases Online',  value:`${online}/32`,      color:'#10b981' },
+          { icon:AlertTriangle, label:'Degradadas',          value:String(degraded),    color:'#f59e0b' },
+          { icon:WifiOff,       label:'Offline',             value:String(offline),     color:'#ef4444' },
+          { icon:Zap,           label:'Paquetes/min (live)', value:(last.ok+last.dup+last.err).toLocaleString(), color:'#a78bfa' },
+        ].map(({ icon:Icon, label, value, color }, i) => (
+          <div key={label} className="glass-card rounded-xl p-5 border border-outline-variant">
+            <div className="flex items-center justify-between mb-3">
+              <div className="w-9 h-9 rounded-lg flex items-center justify-center" style={{background:`${color}18`,border:`1px solid ${color}30`}}>
+                <Icon className="w-4 h-4" style={{color}}/>
               </div>
+              <Activity className="w-4 h-4 text-outline-variant"/>
             </div>
-
-            {/* Live Status Badge */}
-            <div className="absolute bottom-6 right-6 flex gap-3">
-              <div className="map-glass px-5 py-2 rounded-full flex items-center gap-3 text-xs font-bold text-primary shadow-lg">
-                <span className="w-2.5 h-2.5 rounded-full bg-secondary animate-pulse shadow-[0_0_8px_rgba(0,104,119,0.6)]" />
-                Kafka Status: Healthy
-              </div>
-              <button className="map-glass p-2.5 rounded-full text-primary shadow-lg hover:bg-surface-container transition-all">
-                 <Layout className="w-5 h-5" />
-              </button>
-            </div>
+            <p className="text-[10px] font-bold text-on-surface-variant uppercase tracking-widest mb-1">{label}</p>
+            <p className="text-2xl font-bold text-on-surface font-mono">{value}</p>
           </div>
+        ))}
+      </div>
 
-          {/* Right Sidebar: Health Table & Trend */}
-          <div className="lg:col-span-4 flex flex-col gap-6">
-            <div className="bg-surface-container-lowest border border-outline-variant rounded-2xl shadow-sm flex flex-col overflow-hidden">
-              <div className="p-5 border-b border-outline-variant bg-surface-container-low flex justify-between items-center">
-                <h4 className="text-sm font-bold text-primary uppercase tracking-widest">Salud por Modelo</h4>
-                <div className="text-outline cursor-pointer hover:text-primary"><WifiOff className="w-4 h-4" /></div>
-              </div>
-              <div className="flex-1 overflow-y-auto">
-                <table className="w-full text-left border-collapse">
-                  <thead className="bg-surface-container-low text-[10px] text-on-surface-variant font-bold uppercase tracking-widest sticky top-0">
-                    <tr>
-                      <th className="p-4 border-b border-outline-variant">Modelo</th>
-                      <th className="p-4 border-b border-outline-variant text-center">Fallo</th>
-                      <th className="p-4 border-b border-outline-variant text-right">Batería</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-outline-variant/50">
-                    {DEVICE_HEALTH.map((d, i) => (
-                      <tr key={i} className="hover:bg-surface-container-low/50 transition-colors group">
-                        <td className="p-4">
-                          <p className="text-sm font-bold text-primary">{d.model}</p>
-                          <p className="text-[10px] text-on-surface-variant opacity-60 font-medium italic">{d.category}</p>
-                        </td>
-                        <td className="p-4 text-center">
-                          <span className={cn(
-                            "text-[11px] font-bold px-2 py-0.5 rounded-md",
-                            d.urgent ? "bg-error-container text-error" : d.alert ? "bg-orange-100 text-orange-700" : "bg-secondary-container/30 text-secondary"
-                          )}>
-                            {d.failure}
-                          </span>
-                        </td>
-                        <td className="p-4 text-right">
-                           <div className="flex items-center justify-end gap-2 text-xs font-bold">
-                              <span className={cn(d.alert ? "text-error" : "text-on-surface")}>{d.battery}</span>
-                              <div className={cn("w-3 h-5 border rounded-[2px] relative flex flex-col justify-end p-[1px]", d.alert ? "border-error" : "border-outline-variant")}>
-                                 <div className={cn("w-full rounded-[1px]", d.alert ? "bg-error h-2" : "bg-secondary h-4")} />
-                                 <div className="absolute -top-[3px] left-1/2 -translate-x-1/2 w-1.5 h-[2px] bg-inherit border border-inherit rounded-t-[1px]" />
-                              </div>
-                           </div>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-              <div className="p-4 border-t border-outline-variant bg-surface-container-low/30 text-center">
-                <button className="text-[10px] font-bold text-primary uppercase tracking-widest hover:underline">Ver Reporte Detallado</button>
-              </div>
+      {/* Stream + Radiobases */}
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+        <div className="lg:col-span-7 glass-card rounded-xl p-5 border border-outline-variant">
+          <div className="flex items-center justify-between mb-4">
+            <div>
+              <h3 className="text-sm font-bold text-on-surface">Stream LoRaWAN · Ingesta Tiempo Real</h3>
+              <p className="text-xs text-on-surface-variant mt-0.5">
+                Limpieza: <span className="font-bold text-amber-400">{dupRate}%</span> duplicados filtrados · Target: 0.07%
+              </p>
             </div>
-
-            {/* Ingestion Trend Sparkline Card */}
-            <div className="bg-surface-container-lowest border border-outline-variant rounded-2xl p-6 shadow-sm flex flex-col">
-              <h4 className="text-[10px] font-bold text-on-surface-variant uppercase tracking-[0.2em] mb-6">Tendencia de Ingesta (24H)</h4>
-              <div className="flex-1 flex items-end gap-1.5 h-32 px-1">
-                {[40, 55, 30, 70, 95, 80, 60, 45, 35, 60, 75, 85].map((h, i) => (
-                   <div 
-                    key={i} 
-                    className={cn(
-                      "flex-1 rounded-t-sm transition-all duration-500",
-                      i === 4 ? "bg-primary shadow-[0_0_12px_rgba(0,52,111,0.3)]" : "bg-primary-fixed-dim"
-                    )}
-                    style={{ height: `${h}%` }}
-                   />
+            <span className="text-[10px] font-bold px-2 py-1 rounded-full bg-secondary/10 text-secondary border border-secondary/20">● Streaming</span>
+          </div>
+          <ResponsiveContainer width="100%" height={230}>
+            <AreaChart data={stream} margin={{top:0,right:10,left:-10,bottom:0}}>
+              <defs>
+                {[['gOk','#10b981'],['gDup','#f59e0b'],['gErr','#ef4444']].map(([id,c])=>(
+                  <linearGradient key={id} id={id} x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="5%" stopColor={c} stopOpacity={0.3}/><stop offset="95%" stopColor={c} stopOpacity={0}/>
+                  </linearGradient>
                 ))}
-              </div>
-              <div className="flex justify-between mt-4 text-[9px] font-bold text-outline uppercase tracking-wider">
-                <span>00:00</span>
-                <span>12:00</span>
-                <span>23:59</span>
-              </div>
-            </div>
+              </defs>
+              <CartesianGrid strokeDasharray="3 3" stroke="#1e2d45"/>
+              <XAxis dataKey="t" tick={{fill:'#4b5875',fontSize:9}} axisLine={false} tickLine={false} interval={4}/>
+              <YAxis tick={{fill:'#4b5875',fontSize:10}} axisLine={false} tickLine={false}/>
+              <Tooltip content={<DarkTip/>}/>
+              <Area type="monotone" dataKey="ok"  name="OK"         stroke="#10b981" fill="url(#gOk)"  strokeWidth={2}/>
+              <Area type="monotone" dataKey="dup" name="Duplicados" stroke="#f59e0b" fill="url(#gDup)" strokeWidth={1.5}/>
+              <Area type="monotone" dataKey="err" name="Errores"    stroke="#ef4444" fill="url(#gErr)" strokeWidth={1.5}/>
+            </AreaChart>
+          </ResponsiveContainer>
+        </div>
+
+        {/* Radiobases table */}
+        <div className="lg:col-span-5 glass-card rounded-xl overflow-hidden border border-outline-variant">
+          <div className="px-4 py-3 border-b border-outline-variant flex items-center justify-between">
+            <h3 className="text-sm font-bold text-on-surface">Estado Radiobases LoRaWAN</h3>
+            <span className="text-[10px] font-bold text-secondary">{online} Online</span>
           </div>
+          <div className="overflow-y-auto" style={{maxHeight:260}}>
+            <table className="w-full text-left">
+              <thead className="text-[10px] font-bold uppercase tracking-widest text-on-surface-variant bg-surface-container-low sticky top-0">
+                <tr>{['ID','Medidores','Uptime','Err%','Estado'].map(h=><th key={h} className="px-4 py-3">{h}</th>)}</tr>
+              </thead>
+              <tbody className="divide-y divide-outline-variant/50">
+                {RADIOBASES.slice(0,16).map(r=>(
+                  <tr key={r.id} className="hover:bg-surface-container transition-colors">
+                    <td className="px-4 py-2.5 font-mono text-xs font-bold text-primary">{r.id}</td>
+                    <td className="px-4 py-2.5 text-xs text-on-surface-variant">{r.medidoresConectados.toLocaleString()}</td>
+                    <td className="px-4 py-2.5 text-xs font-bold" style={{color:r.uptimePct>98?'#34d399':r.uptimePct>95?'#fbbf24':'#f87171'}}>{r.uptimePct}%</td>
+                    <td className="px-4 py-2.5 text-xs text-on-surface-variant">{r.erroresPct.toFixed(3)}%</td>
+                    <td className="px-4 py-2.5">
+                      <span className={cn('text-[10px] font-bold px-2 py-0.5 rounded-full',
+                        r.status==='online'?'bg-secondary-container/20 text-secondary':
+                        r.status==='degraded'?'bg-amber-100/10 text-amber-400':'bg-error-container/20 text-error')}>
+                        {r.status}
+                      </span>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      {/* Tabla comparativa 5 modelos — Error codes 3/4/5 */}
+      <div className="glass-card rounded-xl overflow-hidden border border-outline-variant">
+        <div className="px-5 py-4 border-b border-outline-variant bg-surface-container-low/30 flex items-center justify-between">
+          <div>
+            <h3 className="text-sm font-bold text-on-surface">Tabla Comparativa — 5 Modelos de Medidores</h3>
+            <p className="text-xs text-on-surface-variant mt-0.5">Errores críticos tipo 3 (Alimentación), 4 (Conectividad), 5 (Configuración)</p>
+          </div>
+          <div className="flex items-center gap-2 text-[10px] font-bold text-error bg-error-container/20 px-3 py-1.5 rounded-lg border border-error/20">
+            <Wrench className="w-3.5 h-3.5"/> {mantenimiento.length} modelo(s) requieren mantenimiento
+          </div>
+        </div>
+        <div className="overflow-x-auto">
+          <table className="w-full text-left">
+            <thead className="text-[10px] font-bold uppercase tracking-widest text-on-surface-variant bg-surface-container-low/50">
+              <tr>
+                {['Modelo','Total','Activos','Antigüedad','Fallo %','Err-3 Alim.','Err-4 Conex.','Err-5 Config.','Batería','Estado'].map(h=>(
+                  <th key={h} className="px-5 py-4">{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-outline-variant/50">
+              {MODELOS_STATS.map(m=>{
+                const necMant = m.avgAge>4 || (m.erroresAlimentacion+m.erroresConectividad+m.erroresConfig)>500;
+                return (
+                  <tr key={m.modelo}
+                    className={cn('hover:bg-surface-container transition-colors cursor-pointer', selModel.modelo===m.modelo?'bg-primary/5':'')}
+                    onClick={()=>handleModel(m)}>
+                    <td className="px-5 py-4">
+                      <div className="flex items-center gap-2">
+                        <div className="w-3 h-3 rounded-full" style={{background:MODEL_COLORS[m.modelo]}}/>
+                        <span className="font-bold text-sm text-primary">{m.modelo}</span>
+                      </div>
+                    </td>
+                    <td className="px-5 py-4 text-sm font-mono text-on-surface">{m.total.toLocaleString()}</td>
+                    <td className="px-5 py-4 text-sm font-mono text-secondary">{m.activos.toLocaleString()}</td>
+                    <td className="px-5 py-4">
+                      <span className={cn('text-xs font-bold font-mono px-2 py-0.5 rounded',
+                        m.avgAge>4?'bg-error-container/20 text-error':'text-on-surface-variant')}>
+                        {m.avgAge.toFixed(1)} años{m.avgAge>4?' ⚠':''}
+                      </span>
+                    </td>
+                    <td className="px-5 py-4">
+                      <span className="text-sm font-bold font-mono" style={{color:m.tasaFallo>5?'#ef4444':m.tasaFallo>4?'#f59e0b':'#34d399'}}>
+                        {m.tasaFallo}%
+                      </span>
+                    </td>
+                    <td className="px-5 py-4 text-sm font-mono" style={{color:m.erroresAlimentacion>500?'#ef4444':'#94a3b8'}}>{m.erroresAlimentacion}</td>
+                    <td className="px-5 py-4 text-sm font-mono" style={{color:m.erroresConectividad>400?'#ef4444':'#94a3b8'}}>{m.erroresConectividad}</td>
+                    <td className="px-5 py-4 text-sm font-mono" style={{color:m.erroresConfig>300?'#ef4444':'#94a3b8'}}>{m.erroresConfig}</td>
+                    <td className="px-5 py-4">
+                      <div className="flex items-center gap-2">
+                        <div className="w-12 bg-surface-container h-1.5 rounded-full overflow-hidden">
+                          <div className="h-full rounded-full transition-all" style={{width:`${m.bateriaPctPromedio}%`,background:m.bateriaPctPromedio<50?'#ef4444':'#10b981'}}/>
+                        </div>
+                        <span className="text-xs font-bold font-mono text-on-surface">{m.bateriaPctPromedio}%</span>
+                      </div>
+                    </td>
+                    <td className="px-5 py-4">
+                      {necMant
+                        ? <span className="text-[10px] font-bold bg-error-container/20 text-error px-2 py-1 rounded-full border border-error/20">Mantenimiento</span>
+                        : <span className="text-[10px] font-bold bg-secondary-container/20 text-secondary px-2 py-1 rounded-full border border-secondary/20">Operativo</span>
+                      }
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      {/* Charts: Barras + Proyección */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 pb-8">
+        <div className="glass-card rounded-xl p-5 border border-outline-variant">
+          <h3 className="text-sm font-bold text-on-surface mb-4">Errores Críticos por Modelo (tipos 3, 4, 5)</h3>
+          <ResponsiveContainer width="100%" height={220}>
+            <BarChart data={MODELOS_STATS.map(m=>({ modelo:m.modelo, 'Err-3 Alim.':m.erroresAlimentacion, 'Err-4 Conex.':m.erroresConectividad, 'Err-5 Config.':m.erroresConfig }))} margin={{top:0,right:10,left:-10,bottom:0}}>
+              <CartesianGrid strokeDasharray="3 3" stroke="#1e2d45"/>
+              <XAxis dataKey="modelo" tick={{fill:'#4b5875',fontSize:9}} axisLine={false} tickLine={false}/>
+              <YAxis tick={{fill:'#4b5875',fontSize:10}} axisLine={false} tickLine={false}/>
+              <Tooltip content={<DarkTip/>}/>
+              <Bar dataKey="Err-3 Alim."  fill="#ef4444" radius={[2,2,0,0]} opacity={0.85}/>
+              <Bar dataKey="Err-4 Conex." fill="#f59e0b" radius={[2,2,0,0]} opacity={0.85}/>
+              <Bar dataKey="Err-5 Config."fill="#a78bfa" radius={[2,2,0,0]} opacity={0.85}/>
+            </BarChart>
+          </ResponsiveContainer>
+        </div>
+
+        <div className="glass-card rounded-xl p-5 border border-outline-variant">
+          <h3 className="text-sm font-bold text-on-surface mb-1">Proyección Demanda 2025–2030</h3>
+          <p className="text-xs text-on-surface-variant mb-4">Crecimiento 2.6% anual</p>
+          <ResponsiveContainer width="100%" height={220}>
+            <AreaChart data={PROYECCION_5A} margin={{top:0,right:10,left:-10,bottom:0}}>
+              <defs>
+                <linearGradient id="gDem" x1="0" y1="0" x2="0" y2="1"><stop offset="5%" stopColor="#3b82f6" stopOpacity={0.3}/><stop offset="95%" stopColor="#3b82f6" stopOpacity={0}/></linearGradient>
+                <linearGradient id="gCap" x1="0" y1="0" x2="0" y2="1"><stop offset="5%" stopColor="#10b981" stopOpacity={0.3}/><stop offset="95%" stopColor="#10b981" stopOpacity={0}/></linearGradient>
+              </defs>
+              <CartesianGrid strokeDasharray="3 3" stroke="#1e2d45"/>
+              <XAxis dataKey="year" tick={{fill:'#4b5875',fontSize:11}} axisLine={false} tickLine={false}/>
+              <YAxis tick={{fill:'#4b5875',fontSize:10}} axisLine={false} tickLine={false}/>
+              <Tooltip content={<DarkTip/>}/>
+              <Area type="monotone" dataKey="demanda"  name="Demanda (m³/hr)" stroke="#3b82f6" fill="url(#gDem)" strokeWidth={2}/>
+              <Area type="monotone" dataKey="capacidad" name="Capacidad (m³/hr)" stroke="#10b981" fill="url(#gCap)" strokeWidth={2}/>
+            </AreaChart>
+          </ResponsiveContainer>
         </div>
       </div>
     </div>
