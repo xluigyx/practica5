@@ -7,7 +7,6 @@ const HydraulicDashboard = lazy(() => import('./pages/HydraulicDashboard'));
 const IoTMonitor = lazy(() => import('./pages/IoTMonitor'));
 const AccountabilityDashboard = lazy(() => import('./pages/AccountabilityDashboard'));
 const CitizenPortal = lazy(() => import('./pages/CitizenPortal'));
-const KioskMode = lazy(() => import('./pages/KioskMode'));
 
 // Temporary components for unfinished routes
 const Placeholder = ({ title }: { title: string }) => (
@@ -34,7 +33,6 @@ export default function App() {
             <Route path="/iot" element={<IoTMonitor />} />
             <Route path="/billing" element={<AccountabilityDashboard />} />
             <Route path="/citizens" element={<CitizenPortal />} />
-            <Route path="/kiosk" element={<KioskMode />} />
             
             <Route path="/infrastructure" element={<Placeholder title="Gestión de Infraestructura" />} />
             <Route path="/reports" element={<Placeholder title="Reportes y Estadísticas" />} />

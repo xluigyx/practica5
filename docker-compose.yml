@@ -13,6 +13,7 @@ networks:
 volumes:
   cassandra-data-1:
   cassandra-data-2:
+  cassandra-data-3:
   kafka-data:
 
 services:
@@ -52,6 +53,28 @@ services:
       - "9043:9042"
     volumes:
       - cassandra-data-2:/var/lib/cassandra
+    environment:
+      CASSANDRA_CLUSTER_NAME: SemapaCluster
+      CASSANDRA_DC: datacenter1
+      CASSANDRA_RACK: rack1
+      CASSANDRA_SEEDS: cassandra-1
+      CASSANDRA_ENDPOINT_SNITCH: GossipingPropertyFileSnitch
+      MAX_HEAP_SIZE: 512M
+      HEAP_NEWSIZE: 128M
+    depends_on:
+      cassandra-1:
+        condition: service_healthy
+
+  # ── Cassandra Node 3 ─────────────────────────────────────
+  cassandra-3:
+    image: cassandra:4.1
+    container_name: semapa-cassandra-3
+    hostname: cassandra-3
+    networks: [semapa-net]
+    ports:
+      - "9044:9042"
+    volumes:
+      - cassandra-data-3:/var/lib/cassandra
     environment:
       CASSANDRA_CLUSTER_NAME: SemapaCluster
       CASSANDRA_DC: datacenter1
@@ -137,11 +160,11 @@ services:
     environment:
       NODE_ENV: production
       PORT: 4000
-      CASSANDRA_HOSTS: cassandra-1,cassandra-2
+      CASSANDRA_HOSTS: cassandra-1,cassandra-2,cassandra-3
       CASSANDRA_KEYSPACE: semapa
       CASSANDRA_DC: datacenter1
       KAFKA_BROKERS: kafka:9092
-      CORS_ORIGIN: http://localhost:3000
+      CORS_ORIGIN: '*'
     depends_on:
       cassandra-1:
         condition: service_healthy
@@ -154,13 +177,13 @@ services:
       retries: 5
     restart: unless-stopped
 
-  # ── Frontend (React/Vite Dev Server) ──────────────────────
-  frontend:
+  # ── Frontend (Admin App) ──────────────────────
+  admin-app:
     image: node:20-alpine
-    container_name: semapa-frontend
+    container_name: admin-app
     networks: [semapa-net]
     ports:
-      - "3000:3000"
+      - "5173:5173"
     working_dir: /app
     volumes:
       - ./frontend:/app
@@ -170,5 +193,24 @@ services:
       api:
         condition: service_healthy
     command: >
-      sh -c "npm install && npm run dev"
+      sh -c "npm install && npm run dev -- --host 0.0.0.0 --port 5173"
+    restart: unless-stopped
+
+  # ── Frontend (Citizen Totem) ────────────────────────
+  citizen-totem:
+    image: node:20-alpine
+    container_name: citizen-totem
+    networks: [semapa-net]
+    ports:
+      - "5174:5174"
+    working_dir: /app
+    volumes:
+      - ./citizen-totem:/app
+    environment:
+      VITE_API_URL: http://localhost:4000
+    depends_on:
+      api:
+        condition: service_healthy
+    command: >
+      sh -c "npm install && npm run dev -- --host 0.0.0.0 --port 5174"
     restart: unless-stopped

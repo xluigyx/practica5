@@ -13,13 +13,9 @@ import {
 import { cn } from '@/src/lib/utils';
 
 const navItems = [
-  { icon: LayoutDashboard, label: 'Panel de Control', href: '/' },
-  { icon: Droplets, label: 'Infraestructura', href: '/infrastructure' },
-  { icon: ReceiptText, label: 'Facturación', href: '/billing' },
-  { icon: Users, label: 'Ciudadanía', href: '/citizens' },
-  { icon: BarChart3, label: 'Reportes', href: '/reports' },
-  { icon: Activity, label: 'Monitor IoT', href: '/iot' },
-  { icon: Settings, label: 'Configuración', href: '/settings' },
+  { icon: LayoutDashboard, label: 'Alcaldía', href: '/' },
+  { icon: Activity, label: 'Gerencia (IoT)', href: '/iot' },
+  { icon: ReceiptText, label: 'Contabilidad', href: '/billing' },
 ];
 
 export function Sidebar() {
