@@ -15,6 +15,8 @@ volumes:
   cassandra-data-2:
   cassandra-data-3:
   kafka-data:
+  evolution-instances:
+  evolution-pg-data:
 
 services:
 
@@ -145,8 +147,8 @@ services:
       test: ["CMD", "kafka-broker-api-versions", "--bootstrap-server", "kafka:9092"]
       interval: 20s
       timeout: 10s
-      retries: 5
-      start_period: 40s
+# Evolution API, DB, and related Redis service removed per user request
+
 
   # ── Backend API (Node.js/Express) ────────────────────────
   api:
@@ -165,6 +167,13 @@ services:
       CASSANDRA_DC: datacenter1
       KAFKA_BROKERS: kafka:9092
       CORS_ORIGIN: '*'
+      # WhatsApp — Evolution API (redirección wa.me + chatbot)
+      WHATSAPP_PROVIDER: ${WHATSAPP_PROVIDER:-evolution}
+      WHATSAPP_BOT_PHONE: ${WHATSAPP_BOT_PHONE:-59162658425}
+      WHATSAPP_BUSINESS_PHONE: ${WHATSAPP_BOT_PHONE:-59162658425}
+      EVOLUTION_API_URL: http://host.docker.internal:8080
+      EVOLUTION_API_KEY: ${EVOLUTION_API_KEY:-luz_evolution_key}
+      EVOLUTION_INSTANCE: ${EVOLUTION_INSTANCE:-luzbot}
     depends_on:
       cassandra-1:
         condition: service_healthy

@@ -35,10 +35,7 @@ CREATE TABLE IF NOT EXISTS medidores (
   ultima_lectura    TIMESTAMP,
   codigo_error      INT,
   firmware          TEXT,
-  bateria_pct       INT,
-  INDEX (distrito_id)
 );
-
 -- ── Lecturas horarias (21.6M/mes) — Partition by medidor+mes ─
 CREATE TABLE IF NOT EXISTS lecturas (
   medidor_serie   TEXT,
@@ -131,3 +128,28 @@ CREATE TABLE IF NOT EXISTS errores_iot (
   resuelto        BOOLEAN,
   PRIMARY KEY (medidor_serie, timestamp_ts)
 ) WITH CLUSTERING ORDER BY (timestamp_ts DESC);
+
+-- Registros de pagos criptográficos verificados por el backend
+CREATE TABLE IF NOT EXISTS pagos_bnb (
+  contrato       TEXT,
+  timestamp_ts   TIMESTAMP,
+  meses_pagados  INT,
+  monto_bs       FLOAT,
+  monto_bnb      FLOAT,
+  tx_hash        TEXT,
+  estado         TEXT,
+  PRIMARY KEY (contrato, timestamp_ts)
+) WITH CLUSTERING ORDER BY (timestamp_ts DESC);
+
+-- Registro de notificaciones realmente despachadas por el consumidor Kafka
+CREATE TABLE IF NOT EXISTS notificaciones_despacho (
+  contrato       TEXT,
+  canal          TEXT,
+  periodo        TEXT,
+  timestamp_ts   TIMESTAMP,
+  destino        TEXT,
+  mensaje        TEXT,
+  estado         TEXT,
+  PRIMARY KEY (contrato, timestamp_ts)
+) WITH CLUSTERING ORDER BY (timestamp_ts DESC);
+

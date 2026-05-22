@@ -11,7 +11,13 @@ const app  = express();
 const PORT = process.env.PORT || 4000;
 
 app.use(cors({ origin: process.env.CORS_ORIGIN || '*' }));
-app.use(express.json());
+app.use(express.json({
+  verify: (req, _res, buf) => {
+    if (req.originalUrl?.includes('/api/whatsapp/')) {
+      req.rawBody = buf;
+    }
+  },
+}));
 app.use(morgan('[:date[iso]] :method :url :status :response-time ms'));
 
 app.use('/api', routes);
@@ -49,6 +55,8 @@ async function main() {
 ║  GET  /api/medidores/errores?codigos=3,4,5   ║
 ║  GET  /api/lecturas/:serie?periodo=2025-05   ║
 ║  POST /api/iot/simular  { n: 1000 }         ║
+║  GET  /api/whatsapp/chat-link (wa.me)       ║
+║  GET  /api/whatsapp/status                  ║
 ╚══════════════════════════════════════════════╝`);
       // startup logo printed
   } catch (err) {
