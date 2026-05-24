@@ -33,7 +33,6 @@ export default function App() {
             <Route path="/iot" element={<IoTMonitor />} />
             <Route path="/billing" element={<AccountabilityDashboard />} />
             <Route path="/citizens" element={<CitizenPortal />} />
-            
             <Route path="/infrastructure" element={<Placeholder title="Gestión de Infraestructura" />} />
             <Route path="/reports" element={<Placeholder title="Reportes y Estadísticas" />} />
             <Route path="/settings" element={<Placeholder title="Configuración del Sistema" />} />

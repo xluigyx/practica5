@@ -1,14 +1,11 @@
 import React from 'react';
 import { NavLink } from 'react-router-dom';
-import { 
-  LayoutDashboard, 
-  Droplets, 
-  ReceiptText, 
-  Users, 
-  BarChart3, 
-  Settings, 
+import {
+  LayoutDashboard,
+  Droplets,
+  ReceiptText,
   PlusCircle,
-  Activity
+  Activity,
 } from 'lucide-react';
 import { cn } from '@/src/lib/utils';
 

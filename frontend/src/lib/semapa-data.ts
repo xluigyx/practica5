@@ -92,22 +92,24 @@ export function calcularFactura(categoria: TarifaCategoria, consumoM3: number): 
   };
 }
 
-// ─── Datos de Distritos (14 distritos Cochabamba) ────────────────────────────
+// ─── Datos de Distritos (15 distritos Cochabamba — 6 Comunas) ────────────────
+// Orden numérico. Subalcaldía = nombre correcto de comuna.
 export const DISTRITOS: DistritoMetrics[] = [
-  { id:1,  name:'D-1 Norte',        subalcaldia:'Adela Zamudio', consumoM3:310, presionPSI:15.2, poblacion:52400,  medidoresActivos:8120,  medidoresTotal:8500,  cobertura:95.5, calidadICA:82, temperatura:18.2, status:'normal' },
-  { id:2,  name:'D-2 Noroeste',     subalcaldia:'Adela Zamudio', consumoM3:265, presionPSI:14.8, poblacion:41200,  medidoresActivos:6100,  medidoresTotal:6400,  cobertura:95.3, calidadICA:85, temperatura:17.8, status:'normal' },
-  { id:3,  name:'D-3 Quillacollo',  subalcaldia:'Adela Zamudio', consumoM3:290, presionPSI:13.5, poblacion:48600,  medidoresActivos:7200,  medidoresTotal:7600,  cobertura:94.7, calidadICA:79, temperatura:18.5, status:'normal' },
-  { id:4,  name:'D-4 Oeste',        subalcaldia:'Tunari',        consumoM3:285, presionPSI:11.8, poblacion:44800,  medidoresActivos:6600,  medidoresTotal:7100,  cobertura:92.9, calidadICA:76, temperatura:19.1, status:'mantenimiento' },
-  { id:5,  name:'D-5 Sureste',      subalcaldia:'Tunari',        consumoM3:320, presionPSI:16.1, poblacion:55200,  medidoresActivos:8400,  medidoresTotal:8800,  cobertura:95.4, calidadICA:88, temperatura:17.5, status:'normal' },
-  { id:6,  name:'D-6 Sur',          subalcaldia:'Tunari',        consumoM3:275, presionPSI:12.9, poblacion:43100,  medidoresActivos:6300,  medidoresTotal:6700,  cobertura:94.0, calidadICA:81, temperatura:19.8, status:'normal' },
-  { id:7,  name:'D-7 Valle H.',     subalcaldia:'Valle Hermoso', consumoM3:230, presionPSI:10.5, poblacion:38000,  medidoresActivos:5400,  medidoresTotal:5900,  cobertura:91.5, calidadICA:74, temperatura:20.2, status:'normal' },
-  { id:8,  name:'D-8 Temporal',     subalcaldia:'Valle Hermoso', consumoM3:195, presionPSI:9.8,  poblacion:32400,  medidoresActivos:4500,  medidoresTotal:5100,  cobertura:88.2, calidadICA:71, temperatura:21.0, status:'mantenimiento' },
-  { id:9,  name:'D-9 Molle',        subalcaldia:'Molle',         consumoM3:410, presionPSI:14.2, poblacion:58800,  medidoresActivos:8700,  medidoresTotal:9200,  cobertura:94.5, calidadICA:80, temperatura:18.8, status:'alta-demanda' },
-  { id:10, name:'D-10 Central',     subalcaldia:'Molle',         consumoM3:520, presionPSI:12.5, poblacion:64500,  medidoresActivos:9600,  medidoresTotal:10200, cobertura:94.1, calidadICA:78, temperatura:19.4, status:'critico' },
-  { id:11, name:'D-11 Itocta',      subalcaldia:'Itocta',        consumoM3:245, presionPSI:13.8, poblacion:40200,  medidoresActivos:5800,  medidoresTotal:6100,  cobertura:95.0, calidadICA:83, temperatura:18.0, status:'normal' },
-  { id:12, name:'D-12 Industrial',  subalcaldia:'Itocta',        consumoM3:480, presionPSI:11.2, poblacion:35600,  medidoresActivos:5100,  medidoresTotal:5400,  cobertura:94.4, calidadICA:65, temperatura:20.8, status:'critico' },
-  { id:13, name:'D-13 Lacma N.',    subalcaldia:'Lacma',         consumoM3:215, presionPSI:10.9, poblacion:37200,  medidoresActivos:5300,  medidoresTotal:5700,  cobertura:93.0, calidadICA:77, temperatura:19.2, status:'normal' },
-  { id:14, name:'D-14 Lacma S.',    subalcaldia:'Lacma',         consumoM3:342, presionPSI:13.1, poblacion:46800,  medidoresActivos:6900,  medidoresTotal:7300,  cobertura:94.5, calidadICA:82, temperatura:18.6, status:'normal' },
+  { id:1,  name:'D-1 Queru Queru',    subalcaldia:'Tunari',           consumoM3:310, presionPSI:15.2, poblacion:52400,  medidoresActivos:8120,  medidoresTotal:8500,  cobertura:95.5, calidadICA:82, temperatura:18.2, status:'normal' },
+  { id:2,  name:'D-2 Cala Cala',      subalcaldia:'Tunari',           consumoM3:265, presionPSI:14.8, poblacion:41200,  medidoresActivos:6100,  medidoresTotal:6400,  cobertura:95.3, calidadICA:85, temperatura:17.8, status:'normal' },
+  { id:3,  name:'D-3 Sarco',          subalcaldia:'Molle',            consumoM3:290, presionPSI:13.5, poblacion:48600,  medidoresActivos:7200,  medidoresTotal:7600,  cobertura:94.7, calidadICA:79, temperatura:18.5, status:'normal' },
+  { id:4,  name:'D-4 Hipódromo',      subalcaldia:'Molle',            consumoM3:285, presionPSI:11.8, poblacion:44800,  medidoresActivos:6600,  medidoresTotal:7100,  cobertura:92.9, calidadICA:76, temperatura:19.1, status:'mantenimiento' },
+  { id:5,  name:'D-5 Jaihuayco',      subalcaldia:'Alejo Calatayud',  consumoM3:320, presionPSI:16.1, poblacion:55200,  medidoresActivos:8400,  medidoresTotal:8800,  cobertura:95.4, calidadICA:88, temperatura:17.5, status:'normal' },
+  { id:6,  name:'D-6 Alalay Norte',   subalcaldia:'Valle Hermoso',    consumoM3:275, presionPSI:12.9, poblacion:43100,  medidoresActivos:6300,  medidoresTotal:6700,  cobertura:94.0, calidadICA:81, temperatura:19.8, status:'normal' },
+  { id:7,  name:'D-7 Alalay',         subalcaldia:'Valle Hermoso',    consumoM3:230, presionPSI:10.5, poblacion:38000,  medidoresActivos:5400,  medidoresTotal:5900,  cobertura:91.5, calidadICA:74, temperatura:20.2, status:'normal' },
+  { id:8,  name:'D-8 Ticti',          subalcaldia:'Alejo Calatayud',  consumoM3:195, presionPSI:9.8,  poblacion:32400,  medidoresActivos:4500,  medidoresTotal:5100,  cobertura:88.2, calidadICA:71, temperatura:21.0, status:'mantenimiento' },
+  { id:9,  name:'D-9 La Maica',       subalcaldia:'Itocta',           consumoM3:410, presionPSI:14.2, poblacion:58800,  medidoresActivos:8700,  medidoresTotal:9200,  cobertura:94.5, calidadICA:80, temperatura:18.8, status:'alta-demanda' },
+  { id:10, name:'D-10 Centro Norte',  subalcaldia:'Adela Zamudio',    consumoM3:520, presionPSI:12.5, poblacion:64500,  medidoresActivos:9600,  medidoresTotal:10200, cobertura:94.1, calidadICA:78, temperatura:19.4, status:'critico' },
+  { id:11, name:'D-11 Muyurina',      subalcaldia:'Adela Zamudio',    consumoM3:245, presionPSI:13.8, poblacion:40200,  medidoresActivos:5800,  medidoresTotal:6100,  cobertura:95.0, calidadICA:83, temperatura:18.0, status:'normal' },
+  { id:12, name:'D-12 Sarco Centro',  subalcaldia:'Adela Zamudio',    consumoM3:480, presionPSI:11.2, poblacion:35600,  medidoresActivos:5100,  medidoresTotal:5400,  cobertura:94.4, calidadICA:65, temperatura:20.8, status:'critico' },
+  { id:13, name:'D-13 Tunari',        subalcaldia:'Tunari',           consumoM3:215, presionPSI:10.9, poblacion:37200,  medidoresActivos:5300,  medidoresTotal:5700,  cobertura:93.0, calidadICA:77, temperatura:19.2, status:'normal' },
+  { id:14, name:'D-14 Alalay Sud',    subalcaldia:'Valle Hermoso',    consumoM3:342, presionPSI:13.1, poblacion:46800,  medidoresActivos:6900,  medidoresTotal:7300,  cobertura:94.5, calidadICA:82, temperatura:18.6, status:'normal' },
+  { id:15, name:'D-15 Pukara Grande', subalcaldia:'Itocta',           consumoM3:178, presionPSI:8.9,  poblacion:28500,  medidoresActivos:3800,  medidoresTotal:4200,  cobertura:90.5, calidadICA:69, temperatura:21.5, status:'normal' },
 ];
 
 // ─── Modelos de medidores — stats técnicos ────────────────────────────────────
