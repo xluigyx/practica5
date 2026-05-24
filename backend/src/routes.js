@@ -18,7 +18,12 @@ const {
 } = require('./paymentService');
 const { sendWhatsAppText: sendWa } = require('./whatsapp');
 
+const consultasRouter = require('./queries');
+
 const router = Router();
+
+// ── Las 25 Consultas del PDF ──────────────────────────────────────────────────
+router.use('/consultas', consultasRouter);
 
 // ── Health ────────────────────────────────────────────────────────────────────
 router.get('/health', (_req, res) =>
@@ -96,10 +101,16 @@ router.get('/medidores/errores', async (req, res) => {
   try {
     // En Cassandra real: SELECT con ALLOW FILTERING por codigo_error
     // Aquí usamos la tabla medidores con filtro en app-level
-    const r = await client.execute(
-      'SELECT serie, modelo, estado, distrito_id, zona, ultima_lectura, codigo_error, bateria_pct FROM medidores'
-    );
-    const filtrados = r.rows.filter(m => codigos.includes(m.codigo_error));
+    const rows = await new Promise((resolve, reject) => {
+      const acc = [];
+      client.eachRow(
+        'SELECT serie, modelo, estado, distrito_id, zona, ultima_lectura, codigo_error FROM medidores',
+        [], { autoPage: true, fetchSize: 5000 },
+        (_n, row) => acc.push(row),
+        (err) => err ? reject(err) : resolve(acc)
+      );
+    });
+    const filtrados = rows.filter(m => codigos.includes(m.codigo_error));
     res.json(filtrados);
   } catch (e) {
     res.status(500).json({ error: e.message });
@@ -126,6 +137,43 @@ router.get('/cierre', async (req, res) => {
     res.status(500).json({ error: e.message });
   }
 });
+
+// ── GERENCIA: resumen de estados de medidores ─────────────────────────────────
+router.get('/medidores/estados', async (_req, res) => {
+  try {
+    const counts = {};
+    await new Promise((resolve, reject) => {
+      client.eachRow(
+        'SELECT estado FROM medidores', [],
+        { autoPage: true, fetchSize: 5000 },
+        (_n, row) => { const e = row.estado || 'Desconocido'; counts[e] = (counts[e] || 0) + 1; },
+        (err) => err ? reject(err) : resolve()
+      );
+    });
+    const total = Object.values(counts).reduce((s, n) => s + n, 0);
+    const data = Object.entries(counts)
+      .map(([estado, count]) => ({ estado, count, pct: total > 0 ? +((count / total) * 100).toFixed(1) : 0 }))
+      .sort((a, b) => b.count - a.count);
+    res.json({ total, data });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ── GERENCIA: descripciones de códigos de error IoT ──────────────────────────
+const ERROR_CODIGOS = {
+  1: 'Automático (Bien)',
+  2: 'Manual',
+  3: 'Falla en la alimentación eléctrica',
+  4: 'Fallo en la conectividad de red',
+  5: 'Configuración incorrecta del sensor o gateway',
+  6: 'Obstrucción o daño en el caudalímetro',
+  7: 'Problemas de firmware o software embebido',
+  8: 'Error en el backend o plataforma IoT',
+  9: 'Desincronización de reloj (timestamp incorrecto)',
+};
+
+router.get('/errores/codigos', (_req, res) => res.json(ERROR_CODIGOS));
 
 // ── GERENCIA: radiobases LoRaWAN ──────────────────────────────────────────────
 router.get('/radiobases', async (_req, res) => {

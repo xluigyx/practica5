@@ -141,6 +141,30 @@ CREATE TABLE IF NOT EXISTS pagos_bnb (
   PRIMARY KEY (contrato, timestamp_ts)
 ) WITH CLUSTERING ORDER BY (timestamp_ts DESC);
 
+-- ── Infraestructuras / Catastro urbano ───────────────────────────────────────
+CREATE TABLE IF NOT EXISTS infraestructuras (
+  numero_catastro   TEXT PRIMARY KEY,
+  propietario       TEXT,
+  ci                TEXT,
+  direccion         TEXT,
+  zona              TEXT,
+  distrito          INT,
+  manzano           INT,
+  lote              INT,
+  superficie_m2     FLOAT,
+  area_construida   FLOAT,
+  uso_suelo         TEXT,
+  matricula_ddrr    TEXT,
+  valor_catastral   FLOAT,
+  impuesto_anual    FLOAT,
+  latitud           FLOAT,
+  longitud          FLOAT
+);
+
+-- Índice por zona para consultas geográficas
+CREATE INDEX IF NOT EXISTS idx_infra_zona     ON infraestructuras (zona);
+CREATE INDEX IF NOT EXISTS idx_infra_distrito ON infraestructuras (distrito);
+
 -- Registro de notificaciones realmente despachadas por el consumidor Kafka
 CREATE TABLE IF NOT EXISTS notificaciones_despacho (
   contrato       TEXT,

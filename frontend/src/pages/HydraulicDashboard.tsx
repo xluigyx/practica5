@@ -1,9 +1,11 @@
-import React, { useState, useCallback } from 'react';
-import { Users, Droplets, Activity, AlertTriangle, TrendingUp, Download } from 'lucide-react';
+import React, { useState, useEffect, useCallback } from 'react';
+import { Users, Droplets, Activity, AlertTriangle, TrendingUp, Download, Wrench, RefreshCw, Sparkles } from 'lucide-react';
 import { AreaChart, Area, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend } from 'recharts';
 import { cn } from '@/src/lib/utils';
 import { DISTRITOS, HISTORICO_CIUDAD } from '@/src/lib/semapa-data';
 import type { DistritoMetrics, StatusDistrito } from '@/src/lib/types';
+import { api } from '@/src/lib/api';
+import type { DistritoRaw, EstadoMedidorRaw } from '@/src/lib/api';
 
 const STATUS_CFG: Record<StatusDistrito, { color: string; bg: string; label: string }> = {
   'normal':        { color:'#10b981', bg:'rgba(16,185,129,0.12)', label:'Normal' },
@@ -12,26 +14,45 @@ const STATUS_CFG: Record<StatusDistrito, { color: string; bg: string; label: str
   'mantenimiento': { color:'#8b5cf6', bg:'rgba(139,92,246,0.12)',label:'Mantenimiento' },
 };
 
-const DarkTip = ({ active, payload, label }: any) => {
-  if (!active || !payload?.length) return null;
-  return (
-    <div className="bg-surface-container-lowest border border-outline-variant rounded-lg p-3 shadow-xl text-xs">
-      <p className="font-bold text-on-surface-variant mb-2">{label}</p>
-      {payload.map((p: any, i: number) => (
-        <p key={i} style={{ color: p.color }} className="font-semibold">
-          {p.name}: <span className="text-on-surface">{p.value?.toLocaleString()}</span>
-        </p>
-      ))}
-    </div>
-  );
-};
+const VALID_STATUS: StatusDistrito[] = ['normal', 'alta-demanda', 'critico', 'mantenimiento'];
+function toStatus(s: string | null, fallback: StatusDistrito): StatusDistrito {
+  return (s && VALID_STATUS.includes(s as StatusDistrito)) ? s as StatusDistrito : fallback;
+}
 
-// SVG Heatmap con datos reales de los 14 distritos
-function HeatmapSVG({ selected, onSelect }: { selected: number | null; onSelect: (id: number) => void }) {
-  const lats = DISTRITOS.map(d => d.id * 3 + 50);
-  const lngs = DISTRITOS.map(d => d.id * 25 + 20);
-  const cMax = Math.max(...DISTRITOS.map(d => d.consumoM3));
-  const cMin = Math.min(...DISTRITOS.map(d => d.consumoM3));
+function mergeDistrito(mock: DistritoMetrics, api: DistritoRaw): DistritoMetrics {
+  return {
+    ...mock,
+    nombre:          api.nombre          || mock.name,
+    name:            api.nombre          || mock.name,
+    subalcaldia:     api.subalcaldia     || mock.subalcaldia,
+    poblacion:       api.poblacion       ?? mock.poblacion,
+    medidoresTotal:  api.medidores_total ?? mock.medidoresTotal,
+    medidoresActivos:Math.round((api.medidores_total ?? mock.medidoresTotal) * (api.cobertura_pct ?? mock.cobertura) / 100),
+    cobertura:       api.cobertura_pct   ?? mock.cobertura,
+    calidadICA:      api.calidad_ica     ?? mock.calidadICA,
+    temperatura:     api.temperatura_c   ?? mock.temperatura,
+    consumoM3:       api.consumo_m3      ?? mock.consumoM3,
+    presionPSI:      api.presion_psi     ?? mock.presionPSI,
+    status:          toStatus(api.status, mock.status),
+  } as DistritoMetrics;
+}
+
+// SVG Heatmap — recibe distritos como prop para usar datos reales
+function HeatmapSVG({ selected, onSelect, distritos }: {
+  selected: number | null;
+  onSelect: (id: number) => void;
+  distritos: DistritoMetrics[];
+}) {
+  if (distritos.length === 0) return (
+    <svg viewBox="0 0 400 320" className="w-full h-full">
+      <rect width="400" height="320" fill="#080c14" rx="8"/>
+      <text x="200" y="160" textAnchor="middle" dominantBaseline="middle" fill="#4b5875" fontSize="14">
+        Sin datos — tabla distritos vacía en Cassandra
+      </text>
+    </svg>
+  );
+  const cMax = Math.max(...distritos.map(d => d.consumoM3));
+  const cMin = Math.min(...distritos.map(d => d.consumoM3));
   const heat = (c: number) => {
     const t = (c - cMin) / (cMax - cMin);
     return t > 0.75 ? '#ef4444' : t > 0.5 ? '#f59e0b' : t > 0.25 ? '#06b6d4' : '#10b981';
@@ -49,7 +70,7 @@ function HeatmapSVG({ selected, onSelect }: { selected: number | null; onSelect:
       {[60,120,180,240,300].map(y => <line key={y} x1="10" y1={y} x2="390" y2={y} stroke="#1e2d45" strokeWidth="0.5"/>)}
       {[50,100,150,200,250,300,350].map(x => <line key={x} x1={x} y1="10" x2={x} y2="310" stroke="#1e2d45" strokeWidth="0.5"/>)}
 
-      {DISTRITOS.map((d, i) => {
+      {distritos.map((d, i) => {
         const col = i % 4, row = Math.floor(i / 4);
         const x = 55 + col * 90, y = 55 + row * 70;
         const c = heat(d.consumoM3);
@@ -71,7 +92,6 @@ function HeatmapSVG({ selected, onSelect }: { selected: number | null; onSelect:
         );
       })}
 
-      {/* Leyenda */}
       <g transform="translate(10,290)">
         {[{ c:'#10b981',l:'<250' },{ c:'#06b6d4',l:'250-350' },{ c:'#f59e0b',l:'350-450' },{ c:'#ef4444',l:'>450' }].map(({c,l},i)=>(
           <g key={i} transform={`translate(${i*95},0)`}>
@@ -87,20 +107,50 @@ function HeatmapSVG({ selected, onSelect }: { selected: number | null; onSelect:
 export default function HydraulicDashboard() {
   const [sel, setSel] = useState<number | null>(10);
   const [loading, setLoading] = useState(false);
-  const district = DISTRITOS.find(d => d.id === sel) ?? null;
-  const totalConsumo = DISTRITOS.reduce((s, d) => s + d.consumoM3, 0);
+
+  // Real data from Cassandra via API
+  const [distritos, setDistritos] = useState<DistritoMetrics[]>(DISTRITOS);
+  const [medActivos, setMedActivos] = useState(115800);
+  const [medFuera, setMedFuera]   = useState(4200);
+  const [estados, setEstados]     = useState<EstadoMedidorRaw[]>([]);
+
+  useEffect(() => {
+    Promise.all([api.distritos(), api.medActivos(), api.medFuera()])
+      .then(([apiDist, activos, fuera]) => {
+        if (apiDist.length > 0) {
+          setDistritos(DISTRITOS.map(d => {
+            const a = apiDist.find(x => x.id === d.id);
+            return a ? mergeDistrito(d, a) : d;
+          }));
+        } else {
+          setDistritos([]);
+        }
+        setMedActivos(activos.total);
+        setMedFuera(fuera.total);
+      })
+      .catch(e => console.warn('[HydraulicDashboard] API fallback:', e));
+
+    api.medEstados()
+      .then(res => setEstados(res.data))
+      .catch(e => console.warn('[HydraulicDashboard] estados fallback:', e));
+  }, []);
+
+  const district = distritos.find(d => d.id === sel) ?? null;
+  const totalConsumo = distritos.reduce((s, d) => s + d.consumoM3, 0);
+  const totalPoblacion = distritos.reduce((s, d) => s + d.poblacion, 0);
+  const alertasCriticas = distritos.filter(d => d.status === 'critico').length;
 
   const handleSelect = useCallback((id: number) => {
     setLoading(true);
     setSel(id);
-    setTimeout(() => setLoading(false), 300); // simula latencia Cassandra
+    setTimeout(() => setLoading(false), 300);
   }, []);
 
   const KPIs = [
-    { label:'Población Beneficiaria', value:'650,240', icon:Users,         color:'#3b82f6' },
-    { label:'Consumo Total Ciudad',   value:`${totalConsumo} m³/s`, icon:Droplets, color:'#06b6d4' },
-    { label:'Medidores Activos',      value:'115,800', icon:Activity,      color:'#10b981' },
-    { label:'Alertas Críticas',       value:'2',       icon:AlertTriangle, color:'#ef4444' },
+    { label:'Población Beneficiaria', value: totalPoblacion.toLocaleString(),         icon:Users,         color:'#3b82f6' },
+    { label:'Consumo Total Ciudad',   value:`${totalConsumo.toLocaleString()} m³/s`,  icon:Droplets,      color:'#06b6d4' },
+    { label:'Medidores Activos',      value: medActivos.toLocaleString(),              icon:Activity,      color:'#10b981' },
+    { label:'Alertas Críticas',       value: String(alertasCriticas),                 icon:AlertTriangle, color:'#ef4444' },
   ];
 
   return (
@@ -109,7 +159,9 @@ export default function HydraulicDashboard() {
         <div>
           <span className="text-xs font-bold text-primary uppercase tracking-widest">Alcaldía de Cochabamba</span>
           <h2 className="text-2xl font-bold text-on-surface mt-0.5">Dashboard de Inteligencia Hídrica</h2>
-          <p className="text-sm text-on-surface-variant">14 Distritos · 56 Zonas · 120,000 Medidores IoT</p>
+          <p className="text-sm text-on-surface-variant">
+            14 Distritos · 56 Zonas · {(medActivos + medFuera).toLocaleString()} Medidores IoT
+          </p>
         </div>
         <button className="flex items-center gap-2 bg-primary text-on-primary px-4 py-2 rounded-lg text-xs font-bold hover:brightness-110 transition-all">
           <Download className="w-4 h-4" /> Exportar
@@ -132,6 +184,33 @@ export default function HydraulicDashboard() {
         ))}
       </section>
 
+      {/* Medidores por estado */}
+      {estados.length > 0 && (
+        <section className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-4">
+          {([
+            { estado:'Operativo',       icon:Activity,   color:'#10b981' },
+            { estado:'Dañado',          icon:AlertTriangle, color:'#ef4444' },
+            { estado:'Mantenimiento',   icon:Wrench,     color:'#f59e0b' },
+            { estado:'Reacondicionado', icon:RefreshCw,  color:'#06b6d4' },
+            { estado:'Nuevo',           icon:Sparkles,   color:'#3b82f6' },
+          ] as const).map(({ estado, icon: Icon, color }) => {
+            const row = estados.find((e: EstadoMedidorRaw) => e.estado === estado);
+            return (
+              <div key={estado} className="glass-card p-5 rounded-xl border border-outline-variant">
+                <div className="flex items-start justify-between mb-3">
+                  <div className="w-9 h-9 rounded-lg flex items-center justify-center" style={{ background:`${color}18`, border:`1px solid ${color}30` }}>
+                    <Icon className="w-4 h-4" style={{ color }}/>
+                  </div>
+                  <TrendingUp className="w-4 h-4 text-secondary"/>
+                </div>
+                <p className="text-[10px] font-bold text-on-surface-variant uppercase tracking-wider mb-1">Medidores {estado}</p>
+                <p className="text-2xl font-bold text-on-surface">{row ? row.count.toLocaleString() : '—'}</p>
+              </div>
+            );
+          })}
+        </section>
+      )}
+
       {/* Mapa + Detalle */}
       <section className="grid grid-cols-1 lg:grid-cols-12 gap-6">
         <div className="lg:col-span-7 glass-card rounded-xl overflow-hidden border border-outline-variant">
@@ -147,7 +226,7 @@ export default function HydraulicDashboard() {
             </div>
           </div>
           <div className="h-[340px] p-2">
-            <HeatmapSVG selected={sel} onSelect={handleSelect} />
+            <HeatmapSVG selected={sel} onSelect={handleSelect} distritos={distritos} />
           </div>
         </div>
 
@@ -203,11 +282,10 @@ export default function HydraulicDashboard() {
                 )}
               </div>
 
-              {/* Mini ranking */}
               <div className="glass-card rounded-xl p-5 border border-outline-variant">
                 <p className="text-[10px] font-bold text-on-surface-variant uppercase tracking-wider mb-3">Ranking Consumo</p>
                 <div className="space-y-2">
-                  {[...DISTRITOS].sort((a, b) => b.consumoM3 - a.consumoM3).slice(0, 5).map(d => (
+                  {[...distritos].sort((a, b) => b.consumoM3 - a.consumoM3).slice(0, 5).map(d => (
                     <div key={d.id} className="flex items-center gap-2 cursor-pointer" onClick={() => handleSelect(d.id)}>
                       <span className="text-[10px] font-bold w-7 text-on-surface-variant text-right">D{d.id}</span>
                       <div className="flex-1 bg-surface-container h-2 rounded-full overflow-hidden">
@@ -279,7 +357,7 @@ export default function HydraulicDashboard() {
               <tr>{['Distrito','Subalcaldía','Consumo','Presión','Población','Cobertura','ICA','Estado'].map(h=><th key={h} className="px-5 py-4">{h}</th>)}</tr>
             </thead>
             <tbody className="divide-y divide-outline-variant/50">
-              {DISTRITOS.map(d => {
+              {distritos.map(d => {
                 const st = STATUS_CFG[d.status];
                 return (
                   <tr key={d.id} className={cn('hover:bg-surface-container transition-colors cursor-pointer', sel===d.id?'bg-primary/5':'')}
@@ -314,3 +392,18 @@ export default function HydraulicDashboard() {
     </div>
   );
 }
+
+// Reusable tooltip component (defined after exports to avoid hoisting issues)
+const DarkTip = ({ active, payload, label }: any) => {
+  if (!active || !payload?.length) return null;
+  return (
+    <div className="bg-surface-container-lowest border border-outline-variant rounded-lg p-3 shadow-xl text-xs">
+      <p className="font-bold text-on-surface-variant mb-2">{label}</p>
+      {payload.map((p: any, i: number) => (
+        <p key={i} style={{ color: p.color }} className="font-semibold">
+          {p.name}: <span className="text-on-surface">{p.value?.toLocaleString()}</span>
+        </p>
+      ))}
+    </div>
+  );
+};

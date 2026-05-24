@@ -3,9 +3,22 @@ import { BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, R
 import { DollarSign, TrendingDown, AlertTriangle, FileText, Download, Filter, ChevronRight, Coins, RefreshCw, Copy, ExternalLink, Send, Check } from 'lucide-react';
 import { cn, esConsumoExcesivo } from '@/src/lib/utils';
 import { calcularFactura, CIERRE_6M, MOROSOS, TARIFARIO, CATEGORIAS_LIST } from '@/src/lib/semapa-data';
-import type { TarifaCategoria } from '@/src/lib/types';
+import type { TarifaCategoria, CierreMensual, Moroso } from '@/src/lib/types';
+import { api, type CierreRaw, type MorosoRaw } from '@/src/lib/api';
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:4000';
+
+const MESES_ES = ['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'];
+function formatPeriodo(raw: string): string {
+  const [y, m] = raw.split('-');
+  return `${MESES_ES[parseInt(m, 10) - 1]}-${y}`;
+}
+function mapCierre(r: CierreRaw) {
+  return { periodo: formatPeriodo(r.periodo), facturado: r.facturado, cobrado: r.cobrado, pendiente: r.pendiente, incobrables: r.incobrables, eficiencia: r.eficiencia };
+}
+function mapMoroso(r: MorosoRaw) {
+  return { contrato: r.contrato, nombre: r.nombre, zona: r.zona, distritoId: r.distrito_id, categoria: r.categoria as TarifaCategoria, deudaTotal: r.deuda_total, mesesDeuda: r.meses_deuda, ultimoPago: r.ultimo_pago, medidorSerie: r.medidor_serie };
+}
 
 interface PagoBnbItem {
   contrato: string;
@@ -123,10 +136,24 @@ function SimuladorTarifario() {
 export default function AccountabilityDashboard() {
   const [tab, setTab] = useState<'cierre'|'morosos'|'simulador'|'cripto'>('cierre');
 
+  const [cierreData, setCierreData] = useState<CierreMensual[]>(CIERRE_6M);
+  const [morososData, setMorososData] = useState<Moroso[]>(MOROSOS);
   const [pagosCripto, setPagosCripto] = useState<PagoBnbItem[]>([]);
   const [notificaciones, setNotificaciones] = useState<DespachoItem[]>([]);
   const [loadingCripto, setLoadingCripto] = useState(false);
   const [copiedTx, setCopiedTx] = useState<string | null>(null);
+
+  useEffect(() => {
+    Promise.all([api.cierre(), api.morosos()])
+      .then(([cierreRaw, morososRaw]) => {
+        // Array vacío = tabla truncada → mostrar vacío (no usar mock)
+        // Error de red → catch → sí usa mock
+        const sorted = [...cierreRaw].sort((a, b) => a.periodo.localeCompare(b.periodo));
+        setCierreData(sorted.map(mapCierre));
+        setMorososData(morososRaw.map(mapMoroso));
+      })
+      .catch(err => console.warn('[Contabilidad] Fallback to mock:', err.message));
+  }, []);
 
   const fetchCriptoDatos = useCallback(async () => {
     setLoadingCripto(true);
@@ -204,10 +231,10 @@ export default function AccountabilityDashboard() {
   const totalBnbRecaudado = pagosCripto.reduce((sum, p) => sum + (p.monto_bnb || 0), 0);
   const totalBsCripto = pagosCripto.reduce((sum, p) => sum + (p.monto_bs || 0), 0);
 
-  const ultimo     = CIERRE_6M[CIERRE_6M.length-1];
-  const eficiencia = ((ultimo.cobrado/ultimo.facturado)*100).toFixed(1);
-  const totalInc   = CIERRE_6M.reduce((s,m)=>s+m.incobrables,0);
-  const totalMor   = MOROSOS.reduce((s,m)=>s+m.deudaTotal,0);
+  const ultimo     = cierreData.length > 0 ? cierreData[cierreData.length-1] : null;
+  const eficiencia = ultimo ? ((ultimo.cobrado/ultimo.facturado)*100).toFixed(1) : '—';
+  const totalInc   = cierreData.reduce((s: number, m) => s + m.incobrables, 0);
+  const totalMor   = morososData.reduce((s: number, m) => s + m.deudaTotal, 0);
 
   return (
     <div className="p-6 space-y-6 animate-in fade-in duration-500">
@@ -225,8 +252,8 @@ export default function AccountabilityDashboard() {
       {/* KPIs */}
       <section className="grid grid-cols-2 md:grid-cols-4 gap-4">
         {[
-          { label:'Facturado May-2025', value:`Bs ${(ultimo.facturado/1e6).toFixed(2)}M`,  icon:DollarSign,   color:'#3b82f6' },
-          { label:'Cobrado May-2025',   value:`Bs ${(ultimo.cobrado/1e6).toFixed(2)}M`,    icon:FileText,     color:'#10b981' },
+          { label:'Último período',     value: ultimo ? `Bs ${(ultimo.facturado/1e6).toFixed(2)}M` : 'Sin datos', icon:DollarSign,   color:'#3b82f6' },
+          { label:'Cobrado',           value: ultimo ? `Bs ${(ultimo.cobrado/1e6).toFixed(2)}M`   : 'Sin datos', icon:FileText,     color:'#10b981' },
           { label:'Eficiencia Cobro',   value:`${eficiencia}%`,                             icon:TrendingDown, color:'#a78bfa' },
           { label:'Incobrables 6M',     value:`Bs ${(totalInc/1e6).toFixed(2)}M`,          icon:AlertTriangle,color:'#ef4444' },
         ].map(({label,value,icon:Icon,color})=>(
@@ -258,7 +285,7 @@ export default function AccountabilityDashboard() {
             <div className="glass-card rounded-xl p-5 border border-outline-variant">
               <h3 className="text-sm font-bold text-on-surface mb-4">Facturado vs Cobrado · 6 Meses</h3>
               <ResponsiveContainer width="100%" height={240}>
-                <BarChart data={CIERRE_6M} margin={{top:0,right:10,left:-10,bottom:0}}>
+                <BarChart data={cierreData} margin={{top:0,right:10,left:-10,bottom:0}}>
                   <CartesianGrid strokeDasharray="3 3" stroke="#1e2d45"/>
                   <XAxis dataKey="periodo" tick={{fill:'#4b5875',fontSize:10}} axisLine={false} tickLine={false}/>
                   <YAxis tickFormatter={v=>`${(v/1e6).toFixed(1)}M`} tick={{fill:'#4b5875',fontSize:10}} axisLine={false} tickLine={false}/>
@@ -272,7 +299,7 @@ export default function AccountabilityDashboard() {
             <div className="glass-card rounded-xl p-5 border border-outline-variant">
               <h3 className="text-sm font-bold text-on-surface mb-4">Pendiente e Incobrables — Tendencia</h3>
               <ResponsiveContainer width="100%" height={240}>
-                <LineChart data={CIERRE_6M} margin={{top:0,right:10,left:-10,bottom:0}}>
+                <LineChart data={cierreData} margin={{top:0,right:10,left:-10,bottom:0}}>
                   <CartesianGrid strokeDasharray="3 3" stroke="#1e2d45"/>
                   <XAxis dataKey="periodo" tick={{fill:'#4b5875',fontSize:10}} axisLine={false} tickLine={false}/>
                   <YAxis tickFormatter={v=>`${(v/1e3).toFixed(0)}K`} tick={{fill:'#4b5875',fontSize:10}} axisLine={false} tickLine={false}/>
@@ -295,7 +322,7 @@ export default function AccountabilityDashboard() {
                 <tr>{['Período','Facturado Bs','Cobrado Bs','Pendiente Bs','Incobrables Bs','Eficiencia'].map(h=><th key={h} className="px-5 py-4">{h}</th>)}</tr>
               </thead>
               <tbody className="divide-y divide-outline-variant/50">
-                {CIERRE_6M.map(m=>(
+                {cierreData.map((m: CierreMensual)=>(
                   <tr key={m.periodo} className="hover:bg-surface-container transition-colors">
                     <td className="px-5 py-3 font-bold text-on-surface">{m.periodo}</td>
                     <td className="px-5 py-3 font-mono font-bold text-primary">{m.facturado.toLocaleString()}</td>
@@ -324,7 +351,7 @@ export default function AccountabilityDashboard() {
           <div className="flex items-center gap-3 px-4 py-3 rounded-xl bg-amber-500/10 border border-amber-500/20">
             <AlertTriangle className="w-5 h-5 text-amber-400 flex-shrink-0"/>
             <p className="text-sm text-amber-300">
-              <strong>{MOROSOS.length} contratos</strong> morosos · Deuda total: <strong>Bs {totalMor.toLocaleString()}</strong>
+              <strong>{morososData.length} contratos</strong> morosos · Deuda total: <strong>Bs {totalMor.toLocaleString()}</strong>
             </p>
           </div>
           <div className="glass-card rounded-xl overflow-hidden border border-outline-variant">
@@ -337,7 +364,7 @@ export default function AccountabilityDashboard() {
                 <tr>{['#','Contrato','Nombre','Zona','D','Categoría','Deuda Bs','Meses','Último Pago','Medidor'].map(h=><th key={h} className="px-5 py-4">{h}</th>)}</tr>
               </thead>
               <tbody className="divide-y divide-outline-variant/50">
-                {[...MOROSOS].sort((a,b)=>b.deudaTotal-a.deudaTotal).map((m,i)=>(
+                {[...morososData].sort((a,b)=>b.deudaTotal-a.deudaTotal).map((m: Moroso,i)=>(
                   <tr key={m.contrato} className="hover:bg-surface-container transition-colors">
                     <td className="px-5 py-3 font-bold text-on-surface-variant">#{i+1}</td>
                     <td className="px-5 py-3 font-mono text-xs font-bold text-primary">{m.contrato}</td>

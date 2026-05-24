@@ -2,8 +2,9 @@ import React, { useState, useEffect } from 'react';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell, RadarChart, PolarGrid, PolarAngleAxis, Radar, AreaChart, Area } from 'recharts';
 import { Cpu, WifiOff, AlertTriangle, Activity, Radio, RefreshCw, Zap, Wrench } from 'lucide-react';
 import { cn } from '@/src/lib/utils';
-import { MODELOS_STATS, RADIOBASES, PROYECCION_5A } from '@/src/lib/semapa-data';
-import type { ModeloMedidor, ModeloStats } from '@/src/lib/types';
+import { MODELOS_STATS, PROYECCION_5A } from '@/src/lib/semapa-data';
+import type { ModeloMedidor, ModeloStats, Radiobase } from '@/src/lib/types';
+import { api, type RadiobaseRaw } from '@/src/lib/api';
 
 const DarkTip = ({ active, payload, label }: any) => {
   if (!active || !payload?.length) return null;
@@ -21,6 +22,14 @@ const DarkTip = ({ active, payload, label }: any) => {
 
 const MODEL_COLORS: Record<ModeloMedidor, string> = {
   'ITC 100':'#3b82f6','Siconia':'#06b6d4','OY1320':'#ef4444','WP20':'#10b981','LAIN IoT':'#a78bfa',
+};
+
+const MODELO_NORM: Record<string, ModeloMedidor> = {
+  'ITC 100': 'ITC 100',
+  'Siconia WATER WM-NB': 'Siconia',
+  'OY1320 LoRaWAN': 'OY1320',
+  'WP20': 'WP20',
+  'Medidor 100% IoT': 'LAIN IoT',
 };
 
 // Simula stream LoRaWAN en tiempo real
@@ -45,15 +54,86 @@ function useStream() {
   return data;
 }
 
+const MODELOS_ZERO: ModeloStats[] = MODELOS_STATS.map(m => ({
+  ...m, total: 0, activos: 0, tasaFallo: 0,
+  erroresAlimentacion: 0, erroresConectividad: 0, erroresConfig: 0,
+}));
+
 export default function IoTMonitor() {
   const stream = useStream();
   const [tick, setTick] = useState(0);
-  const [selModel, setSelModel] = useState<ModeloStats>(MODELOS_STATS[0]);
+  const [modelos, setModelos] = useState<ModeloStats[]>(MODELOS_ZERO);
+  const [selModel, setSelModel] = useState<ModeloStats>(MODELOS_ZERO[0]);
   const [loading, setLoading] = useState(false);
+  const [radiobases, setRadiobases] = useState<Radiobase[]>([]);
+  const [errCodigos, setErrCodigos] = useState<Record<string, string>>({});
 
   useEffect(() => {
     const id = setInterval(() => setTick(t => t+1), 1000);
     return () => clearInterval(id);
+  }, []);
+
+  useEffect(() => {
+    api.radiobases()
+      .then(rows => {
+        setRadiobases(rows.map((r): Radiobase => ({
+          id:                  r.id,
+          lat:                 r.lat,
+          lng:                 r.lng,
+          medidoresConectados: r.medidores_conectados,
+          uptimePct:           r.uptime_pct,
+          erroresPct:          r.errores_pct,
+          status:              r.status as Radiobase['status'],
+        })));
+      })
+      .catch(() => setRadiobases([]));
+    api.erroresCodigos()
+      .then(setErrCodigos)
+      .catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    Promise.all([api.modeloFallos(), api.medErrores()])
+      .then(([fallosRes, erroresData]) => {
+        const fallos = fallosRes.data;
+
+        // Tabla vacía = mostrar ceros (no usar mock)
+        // Error de red = catch = mantener mock
+        if (fallos.length === 0) {
+          const zeroed = MODELOS_STATS.map(mock => ({
+            ...mock, total: 0, activos: 0, tasaFallo: 0,
+            erroresAlimentacion: 0, erroresConectividad: 0, erroresConfig: 0,
+          }));
+          setModelos(zeroed);
+          setSelModel(zeroed[0]);
+          return;
+        }
+
+        const errByModel: Record<string, { e3: number; e4: number; e5: number }> = {};
+        for (const me of erroresData) {
+          const norm = MODELO_NORM[me.modelo] ?? me.modelo;
+          if (!errByModel[norm]) errByModel[norm] = { e3: 0, e4: 0, e5: 0 };
+          if (me.codigo_error === 3) errByModel[norm].e3++;
+          else if (me.codigo_error === 4) errByModel[norm].e4++;
+          else if (me.codigo_error === 5) errByModel[norm].e5++;
+        }
+        const updated = MODELOS_STATS.map(mock => {
+          const apiRow = fallos.find(f => (MODELO_NORM[f.modelo] ?? f.modelo) === mock.modelo);
+          if (!apiRow) return { ...mock, total: 0, activos: 0, tasaFallo: 0, erroresAlimentacion: 0, erroresConectividad: 0, erroresConfig: 0 };
+          const errs = errByModel[mock.modelo] ?? { e3: 0, e4: 0, e5: 0 };
+          return {
+            ...mock,
+            total: apiRow.total,
+            tasaFallo: apiRow.tasa_fallo_pct,
+            erroresAlimentacion: errs.e3,
+            erroresConectividad: errs.e4,
+            erroresConfig: errs.e5,
+          };
+        });
+        setModelos(updated);
+        setSelModel(prev => updated.find(m => m.modelo === prev.modelo) ?? updated[0]);
+      })
+      .catch(() => { setModelos(MODELOS_ZERO); setSelModel(MODELOS_ZERO[0]); });
   }, []);
 
   const handleModel = (m: ModeloStats) => {
@@ -62,22 +142,22 @@ export default function IoTMonitor() {
     setTimeout(() => setLoading(false), 300);
   };
 
-  const online   = RADIOBASES.filter(r=>r.status==='online').length;
-  const degraded = RADIOBASES.filter(r=>r.status==='degraded').length;
-  const offline  = RADIOBASES.filter(r=>r.status==='offline').length;
+  const online   = radiobases.filter(r=>r.status==='online').length;
+  const degraded = radiobases.filter(r=>r.status==='degraded').length;
+  const offline  = radiobases.filter(r=>r.status==='offline').length;
 
   const last     = stream[stream.length-1];
   const dupRate  = ((last.dup/(last.ok+last.dup+last.err))*100).toFixed(3);
 
   // Medidores que necesitan mantenimiento: antigüedad >4 años o errores críticos 3/4/5
-  const mantenimiento = MODELOS_STATS.filter(m => m.avgAge > 4 || m.erroresAlimentacion + m.erroresConectividad + m.erroresConfig > 500);
+  const mantenimiento = modelos.filter(m => m.avgAge > 4 || m.erroresAlimentacion + m.erroresConectividad + m.erroresConfig > 500);
 
-  const radarData = MODELOS_STATS.map(m => ({
-    modelo:      m.modelo,
-    Disponibilidad: parseFloat(((m.activos/m.total)*100).toFixed(1)),
-    Confiabilidad:  parseFloat((100-m.tasaFallo).toFixed(1)),
+  const radarData = modelos.map(m => ({
+    modelo:         m.modelo,
+    Disponibilidad: m.total > 0 ? parseFloat(((m.activos / m.total) * 100).toFixed(1)) : 0,
+    Confiabilidad:  parseFloat((100 - m.tasaFallo).toFixed(1)),
     Batería:        m.bateriaPctPromedio,
-    'Anti-Error':   parseFloat((100-(m.erroresAlimentacion+m.erroresConectividad+m.erroresConfig)/m.total*10).toFixed(1)),
+    'Anti-Error':   m.total > 0 ? parseFloat((100 - (m.erroresAlimentacion + m.erroresConectividad + m.erroresConfig) / m.total * 10).toFixed(1)) : 100,
   }));
 
   const radarSelected = radarData.find(r => r.modelo === selModel.modelo);
@@ -89,7 +169,7 @@ export default function IoTMonitor() {
         <div>
           <span className="text-xs font-bold uppercase tracking-widest" style={{color:'#34d399'}}>Red LoRaWAN · GAMC Cochabamba</span>
           <h2 className="text-2xl font-bold text-on-surface mt-0.5">Monitor IoT en Tiempo Real</h2>
-          <p className="text-sm text-on-surface-variant">32 Radiobases · 120,000 Medidores · Apache Cassandra</p>
+          <p className="text-sm text-on-surface-variant">{radiobases.length} Radiobases · 120,000 Medidores · Apache Cassandra</p>
         </div>
         <div className="flex items-center gap-3">
           <span className="flex items-center gap-2 text-xs font-semibold px-3 py-1.5 rounded-lg bg-secondary-container/20 text-secondary border border-secondary/20">
@@ -104,7 +184,7 @@ export default function IoTMonitor() {
       {/* KPIs */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
         {[
-          { icon:Radio,         label:'Radiobases Online',  value:`${online}/32`,      color:'#10b981' },
+          { icon:Radio,         label:'Radiobases Online',  value:`${online}/${radiobases.length}`, color:'#10b981' },
           { icon:AlertTriangle, label:'Degradadas',          value:String(degraded),    color:'#f59e0b' },
           { icon:WifiOff,       label:'Offline',             value:String(offline),     color:'#ef4444' },
           { icon:Zap,           label:'Paquetes/min (live)', value:(last.ok+last.dup+last.err).toLocaleString(), color:'#a78bfa' },
@@ -166,7 +246,7 @@ export default function IoTMonitor() {
                 <tr>{['ID','Medidores','Uptime','Err%','Estado'].map(h=><th key={h} className="px-4 py-3">{h}</th>)}</tr>
               </thead>
               <tbody className="divide-y divide-outline-variant/50">
-                {RADIOBASES.slice(0,16).map(r=>(
+                {radiobases.map(r=>(
                   <tr key={r.id} className="hover:bg-surface-container transition-colors">
                     <td className="px-4 py-2.5 font-mono text-xs font-bold text-primary">{r.id}</td>
                     <td className="px-4 py-2.5 text-xs text-on-surface-variant">{r.medidoresConectados.toLocaleString()}</td>
@@ -192,7 +272,9 @@ export default function IoTMonitor() {
         <div className="px-5 py-4 border-b border-outline-variant bg-surface-container-low/30 flex items-center justify-between">
           <div>
             <h3 className="text-sm font-bold text-on-surface">Tabla Comparativa — 5 Modelos de Medidores</h3>
-            <p className="text-xs text-on-surface-variant mt-0.5">Errores críticos tipo 3 (Alimentación), 4 (Conectividad), 5 (Configuración)</p>
+            <p className="text-xs text-on-surface-variant mt-0.5">
+              Errores tipo 3 ({errCodigos['3'] ?? 'Alimentación'}), 4 ({errCodigos['4'] ?? 'Conectividad'}), 5 ({errCodigos['5'] ?? 'Configuración'})
+            </p>
           </div>
           <div className="flex items-center gap-2 text-[10px] font-bold text-error bg-error-container/20 px-3 py-1.5 rounded-lg border border-error/20">
             <Wrench className="w-3.5 h-3.5"/> {mantenimiento.length} modelo(s) requieren mantenimiento
@@ -208,7 +290,7 @@ export default function IoTMonitor() {
               </tr>
             </thead>
             <tbody className="divide-y divide-outline-variant/50">
-              {MODELOS_STATS.map(m=>{
+              {modelos.map(m=>{
                 const necMant = m.avgAge>4 || (m.erroresAlimentacion+m.erroresConectividad+m.erroresConfig)>500;
                 return (
                   <tr key={m.modelo}
@@ -263,7 +345,7 @@ export default function IoTMonitor() {
         <div className="glass-card rounded-xl p-5 border border-outline-variant">
           <h3 className="text-sm font-bold text-on-surface mb-4">Errores Críticos por Modelo (tipos 3, 4, 5)</h3>
           <ResponsiveContainer width="100%" height={220}>
-            <BarChart data={MODELOS_STATS.map(m=>({ modelo:m.modelo, 'Err-3 Alim.':m.erroresAlimentacion, 'Err-4 Conex.':m.erroresConectividad, 'Err-5 Config.':m.erroresConfig }))} margin={{top:0,right:10,left:-10,bottom:0}}>
+            <BarChart data={modelos.map((m: ModeloStats)=>({ modelo:m.modelo, 'Err-3 Alim.':m.erroresAlimentacion, 'Err-4 Conex.':m.erroresConectividad, 'Err-5 Config.':m.erroresConfig }))} margin={{top:0,right:10,left:-10,bottom:0}}>
               <CartesianGrid strokeDasharray="3 3" stroke="#1e2d45"/>
               <XAxis dataKey="modelo" tick={{fill:'#4b5875',fontSize:9}} axisLine={false} tickLine={false}/>
               <YAxis tick={{fill:'#4b5875',fontSize:10}} axisLine={false} tickLine={false}/>
