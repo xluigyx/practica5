@@ -1,6 +1,6 @@
 // backend/src/paymentService.js — Pagos QR (compartido: API REST + chatbot WhatsApp)
 const { client } = require('./cassandra');
-const { calcularFactura } = require('./billing');
+const { calcularFactura, TARIFARIO } = require('./billing');
 
 const paymentIntents = new Map();
 
@@ -42,24 +42,35 @@ async function getDesgloseContrato(contrato) {
   if (!inmueble) return null;
 
   let mesesDeuda = 0;
+  let deudaReal = inmueble.deuda_total || 0;
   const rMoroso = await client.execute(
-    'SELECT meses_deuda FROM morosos WHERE contrato = ?',
+    'SELECT deuda_total, meses_deuda FROM morosos WHERE contrato = ?',
     [contrato],
     { prepare: true }
   );
-  if (rMoroso.rows[0]) mesesDeuda = rMoroso.rows[0].meses_deuda;
+  if (rMoroso.rows[0]) {
+    mesesDeuda = rMoroso.rows[0].meses_deuda || 0;
+    deudaReal = rMoroso.rows[0].deuda_total || 0;
+  }
 
-  const desgloseVencido = obtenerMesesDeuda(inmueble.deuda_total, mesesDeuda);
-  const facturaActual = calcularFactura(inmueble.categoria, inmueble.consumo_actual_m3);
+  const desgloseVencido = obtenerMesesDeuda(deudaReal, mesesDeuda);
+  const consumo = inmueble.consumo_actual_m3 != null ? inmueble.consumo_actual_m3 : 0;
+  const cat = Object.keys(TARIFARIO).includes(inmueble.categoria) ? inmueble.categoria : 'R3-Residencial';
+  const facturaActual = calcularFactura(cat, consumo);
+
+  const now = new Date();
+  const periodoActual = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+  const nombresMeses = ['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'];
+  const nombreMesActual = `${nombresMeses[now.getMonth()]} ${now.getFullYear()} (Mes Actual)`;
 
   return {
     contrato,
-    deudaTotal: inmueble.deuda_total,
+    deudaTotal: deudaReal,
     mesesDeuda,
     desgloseVencido,
     facturaActual: {
-      periodo: '2025-05',
-      nombre: 'Mayo 2025 (Mes Actual)',
+      periodo: periodoActual,
+      nombre: nombreMesActual,
       monto: facturaActual.total,
       estado: 'pendiente',
     },

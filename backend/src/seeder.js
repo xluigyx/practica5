@@ -11,10 +11,10 @@ const KS    = process.env.CASSANDRA_KEYSPACE || 'semapa';
 const CSV_DIR = process.env.CSV_DIR || 'C:\\Users\\LUIS MARIO\\Downloads';
 
 const FILES = {
-  infra:     path.join(CSV_DIR, '03 Practica 5 Recursos infraestructuras_cochabamba.csv'),
-  medidores: path.join(CSV_DIR, '03 Practica 5 Recursos medidores_iot.csv'),
-  contratos: path.join(CSV_DIR, '03 Practica 5 Recursos contratos_agua.csv'),
-  lecturas:  path.join(CSV_DIR, '03 Practica 5 Recursos lecturas_iot.csv'),
+  infra:     path.join(CSV_DIR, '03 Practica 5 Recursos infraestructuras_cochabamba (1).csv'),
+  medidores: path.join(CSV_DIR, '03 Practica 5 Recursos medidores_iot (1).csv'),
+  contratos: path.join(CSV_DIR, '03 Practica 5 Recursos contratos_agua (1).csv'),
+  lecturas:  path.join(CSV_DIR, '03 Practica 5 Recursos lecturas_iot (1).csv'),
 };
 
 const TIPO_MEDIDOR = {
@@ -25,31 +25,43 @@ const TIPO_MEDIDOR = {
   '5': 'Medidor 100% IoT',
 };
 
+// Distritos según documento oficial: 6 sub-alcaldías → 15 distritos
+// Tunari: 1,2,13 | Molle: 3,4 | Alejo Calatayud: 5,8 | Valle Hermoso: 6,7,14 | Itocta: 9,15 | Adela Zamudio: 10,11,12
 const DISTRITOS = [
-  { id:1,  nombre:'ADELA ZAMUDIO',         subalcaldia:'Adela Zamudio',   poblacion:58000, medidores_total:8800,  cobertura_pct:94.2, calidad_ica:81, temperatura_c:18.5 },
-  { id:2,  nombre:'TUNARI',                subalcaldia:'Tunari',          poblacion:64000, medidores_total:9500,  cobertura_pct:95.1, calidad_ica:83, temperatura_c:17.8 },
-  { id:3,  nombre:'ITOCTA',                subalcaldia:'Itocta',          poblacion:35000, medidores_total:5200,  cobertura_pct:93.8, calidad_ica:72, temperatura_c:20.2 },
-  { id:4,  nombre:'ALEJO CALATAYUD',       subalcaldia:'Alejo Calatayud', poblacion:42000, medidores_total:6300,  cobertura_pct:94.5, calidad_ica:79, temperatura_c:19.1 },
-  { id:5,  nombre:'MOLLE',                 subalcaldia:'Molle',           poblacion:59000, medidores_total:9100,  cobertura_pct:94.9, calidad_ica:80, temperatura_c:18.9 },
-  { id:6,  nombre:'VALLE HERMOSO',         subalcaldia:'Valle Hermoso',   poblacion:52000, medidores_total:7800,  cobertura_pct:95.3, calidad_ica:82, temperatura_c:18.1 },
-  { id:7,  nombre:'PEDRO DOMINGO MURILLO', subalcaldia:'Adela Zamudio',   poblacion:38000, medidores_total:5700,  cobertura_pct:93.2, calidad_ica:77, temperatura_c:19.4 },
-  { id:8,  nombre:'CERCADO NORTE',         subalcaldia:'Tunari',          poblacion:47000, medidores_total:7000,  cobertura_pct:96.0, calidad_ica:85, temperatura_c:17.5 },
-  { id:9,  nombre:'CERCADO SUR',           subalcaldia:'Molle',           poblacion:61000, medidores_total:9400,  cobertura_pct:94.7, calidad_ica:80, temperatura_c:19.0 },
-  { id:10, nombre:'SIPE SIPE',             subalcaldia:'Valle Hermoso',   poblacion:55000, medidores_total:8200,  cobertura_pct:93.5, calidad_ica:78, temperatura_c:19.8 },
-  { id:11, nombre:'ALALAY NORTE',          subalcaldia:'Alejo Calatayud', poblacion:43000, medidores_total:6500,  cobertura_pct:92.8, calidad_ica:76, temperatura_c:20.0 },
-  { id:12, nombre:'INDUSTRIAL',            subalcaldia:'Itocta',          poblacion:36000, medidores_total:5400,  cobertura_pct:94.4, calidad_ica:65, temperatura_c:20.8 },
-  { id:13, nombre:'SACABA NORTE',          subalcaldia:'Tunari',          poblacion:39000, medidores_total:5900,  cobertura_pct:91.5, calidad_ica:74, temperatura_c:18.6 },
-  { id:14, nombre:'ALALAY SUD',            subalcaldia:'Alejo Calatayud', poblacion:44000, medidores_total:6600,  cobertura_pct:93.1, calidad_ica:77, temperatura_c:19.5 },
+  { id:1,  nombre:'QUERU QUERU / ARANJUEZ',    subalcaldia:'Tunari',          poblacion:25100, medidores_total:6600,  cobertura_pct:95.0, calidad_ica:83, temperatura_c:17.8 },
+  { id:2,  nombre:'CALA CALA / MAYORAZGO',     subalcaldia:'Tunari',          poblacion:28100, medidores_total:7400,  cobertura_pct:95.1, calidad_ica:83, temperatura_c:17.8 },
+  { id:3,  nombre:'SARCO / SARCOBAMBA',        subalcaldia:'Molle',           poblacion:44900, medidores_total:11800, cobertura_pct:95.2, calidad_ica:80, temperatura_c:18.9 },
+  { id:4,  nombre:'COÑA COÑA / HIPODROMO',     subalcaldia:'Molle',           poblacion:24300, medidores_total:6400,  cobertura_pct:95.2, calidad_ica:80, temperatura_c:18.9 },
+  { id:5,  nombre:'JAIHUAYCO / LACMA',         subalcaldia:'Alejo Calatayud', poblacion:47700, medidores_total:12500, cobertura_pct:95.4, calidad_ica:79, temperatura_c:19.1 },
+  { id:6,  nombre:'ALALAY NORTE',              subalcaldia:'Valle Hermoso',   poblacion:14100, medidores_total:3700,  cobertura_pct:95.6, calidad_ica:82, temperatura_c:18.1 },
+  { id:7,  nombre:'ALALAY SUD',                subalcaldia:'Valle Hermoso',   poblacion:13300, medidores_total:3500,  cobertura_pct:95.1, calidad_ica:82, temperatura_c:18.1 },
+  { id:8,  nombre:'TICTI / USPHA USPHA',       subalcaldia:'Alejo Calatayud', poblacion:20800, medidores_total:5500,  cobertura_pct:94.4, calidad_ica:76, temperatura_c:20.0 },
+  { id:9,  nombre:'PUKARA GRANDE / TAMBORADA', subalcaldia:'Itocta',          poblacion:52200, medidores_total:13700, cobertura_pct:95.2, calidad_ica:68, temperatura_c:21.0 },
+  { id:10, nombre:'NOROESTE / NORESTE',        subalcaldia:'Adela Zamudio',   poblacion:21300, medidores_total:5600,  cobertura_pct:95.1, calidad_ica:81, temperatura_c:18.5 },
+  { id:11, nombre:'MUYURINA / LAS CUADRAS',    subalcaldia:'Adela Zamudio',   poblacion:14000, medidores_total:3700,  cobertura_pct:94.8, calidad_ica:80, temperatura_c:18.5 },
+  { id:12, nombre:'TUPURAYA / CALA CALA SUD',  subalcaldia:'Adela Zamudio',   poblacion:40400, medidores_total:10600, cobertura_pct:95.2, calidad_ica:77, temperatura_c:19.4 },
+  { id:13, nombre:'CARA CARA',                 subalcaldia:'Tunari',          poblacion:6100,  medidores_total:1600,  cobertura_pct:95.1, calidad_ica:74, temperatura_c:18.6 },
+  { id:14, nombre:'VALLE HERMOSO SUD',         subalcaldia:'Valle Hermoso',   poblacion:23000, medidores_total:6000,  cobertura_pct:95.8, calidad_ica:82, temperatura_c:18.1 },
+  { id:15, nombre:'KHARA KHARA / PUKARA SUR',  subalcaldia:'Itocta',          poblacion:24700, medidores_total:6500,  cobertura_pct:94.9, calidad_ica:68, temperatura_c:21.0 },
 ];
 
+// IDs numéricos según documento oficial (1-7 documentados, 8-14 aprox. por cobertura geográfica)
+// IMPORTANTE: ID 1 = C4/CAD Municipal, ID 2 = Alcaldía Central (según tabla oficial)
 const RADIOBASES_DATA = [
-  { id:'GW-CBB-001', nombre:'Centro C4/CAD Municipal',       lat:-17.3936, lng:-66.1578, status:'online',    medidores_conectados:18200, uptime_pct:99.2, errores_pct:0.041 },
-  { id:'GW-CBB-002', nombre:'Alcaldía Central/Plaza 14',     lat:-17.3932, lng:-66.1567, status:'online',    medidores_conectados:15800, uptime_pct:98.7, errores_pct:0.063 },
-  { id:'GW-CBB-003', nombre:'Subalcaldía Tunari',            lat:-17.3655, lng:-66.1712, status:'online',    medidores_conectados:21400, uptime_pct:99.5, errores_pct:0.028 },
-  { id:'GW-CBB-004', nombre:'Subalcaldía Adela Zamudio',     lat:-17.3760, lng:-66.1500, status:'degraded',  medidores_conectados:14600, uptime_pct:94.3, errores_pct:0.210 },
-  { id:'GW-CBB-005', nombre:'Base aérea Jorge Wilstermann',  lat:-17.4210, lng:-66.1770, status:'online',    medidores_conectados:19700, uptime_pct:99.1, errores_pct:0.055 },
-  { id:'GW-CBB-006', nombre:'Cerro San Pedro',               lat:-17.3600, lng:-66.1300, status:'offline',   medidores_conectados:     0, uptime_pct:0.0,  errores_pct:0.000 },
-  { id:'GW-CBB-007', nombre:'Colina San Sebastián',          lat:-17.4015, lng:-66.1545, status:'online',    medidores_conectados:16300, uptime_pct:97.8, errores_pct:0.087 },
+  { id:'1',  nombre:'C4 / CAD Municipal',             lat:-17.3936, lng:-66.1578, status:'online',   medidores_conectados:9800,  uptime_pct:99.1, errores_pct:0.041 },
+  { id:'2',  nombre:'Alcaldía Central / Plaza 14',    lat:-17.3932, lng:-66.1567, status:'online',   medidores_conectados:8700,  uptime_pct:98.7, errores_pct:0.063 },
+  { id:'3',  nombre:'Subalcaldía Tunari Norte',       lat:-17.3655, lng:-66.1712, status:'online',   medidores_conectados:10200, uptime_pct:99.5, errores_pct:0.028 },
+  { id:'4',  nombre:'Subalcaldía Adela Zamudio',      lat:-17.3760, lng:-66.1500, status:'degraded', medidores_conectados:8100,  uptime_pct:94.3, errores_pct:0.210 },
+  { id:'5',  nombre:'Base Aérea J. Wilstermann',      lat:-17.4210, lng:-66.1770, status:'online',   medidores_conectados:9300,  uptime_pct:99.1, errores_pct:0.055 },
+  { id:'6',  nombre:'Cerro San Pedro',                lat:-17.3600, lng:-66.1300, status:'offline',  medidores_conectados:0,     uptime_pct:0.0,  errores_pct:0.000 },
+  { id:'7',  nombre:'Colina San Sebastián',           lat:-17.4015, lng:-66.1545, status:'online',   medidores_conectados:8500,  uptime_pct:97.8, errores_pct:0.087 },
+  { id:'8',  nombre:'Zona Molle / Sarco',             lat:-17.3980, lng:-66.1640, status:'online',   medidores_conectados:9600,  uptime_pct:98.2, errores_pct:0.071 },
+  { id:'9',  nombre:'Sacaba Centro',                  lat:-17.3700, lng:-66.0800, status:'online',   medidores_conectados:7800,  uptime_pct:96.4, errores_pct:0.112 },
+  { id:'10', nombre:'Valle Hermoso',                  lat:-17.4100, lng:-66.1300, status:'online',   medidores_conectados:8900,  uptime_pct:98.9, errores_pct:0.049 },
+  { id:'11', nombre:'Alalay Norte',                   lat:-17.3890, lng:-66.1420, status:'degraded', medidores_conectados:7200,  uptime_pct:93.1, errores_pct:0.195 },
+  { id:'12', nombre:'Zona Industrial / Itocta',       lat:-17.4350, lng:-66.1600, status:'online',   medidores_conectados:6400,  uptime_pct:97.5, errores_pct:0.098 },
+  { id:'13', nombre:'Alejo Calatayud Sur',            lat:-17.4180, lng:-66.1380, status:'online',   medidores_conectados:7600,  uptime_pct:98.1, errores_pct:0.082 },
+  { id:'14', nombre:'Pukara Grande / Khara Khara',    lat:-17.4520, lng:-66.1750, status:'online',   medidores_conectados:8200,  uptime_pct:99.0, errores_pct:0.037 },
 ];
 
 // ── Cassandra Client ─────────────────────────────────────────────────────────

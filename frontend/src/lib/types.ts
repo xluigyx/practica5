@@ -5,14 +5,14 @@
 
 // ─── Categorías tarifarias (9 categorías SEMAPA) ──────────────────────────────
 export type TarifaCategoria =
-  | 'R1-Preferencial'
-  | 'R2-Social'
+  | 'R1-Residencial'
+  | 'R2-Residencial'
   | 'R3-Residencial'
   | 'R4-Residencial Alta'
-  | 'Comercial'
+  | 'C-Comercial'
   | 'CE-Comercial Especial'
-  | 'Industrial'
-  | 'P-Provisional'
+  | 'I-Industrial'
+  | 'P-Preferencial'
   | 'S-Social';
 
 // ─── Estado medidor/servicio ──────────────────────────────────────────────────
@@ -24,22 +24,24 @@ export type StatusDistrito  = 'normal' | 'alta-demanda' | 'critico' | 'mantenimi
 // ─── Modelo de Medidor ────────────────────────────────────────────────────────
 export type ModeloMedidor = 'ITC 100' | 'Siconia' | 'OY1320' | 'WP20' | 'LAIN IoT';
 
-// ─── Error codes de medidor (SEMAPA spec) ─────────────────────────────────────
-export type CodigoError = 1 | 2 | 3 | 4 | 5;
-// 1=Lectura | 2=Calibración | 3=Alimentación | 4=Conectividad | 5=Configuración
+// ─── Error codes de medidor (SEMAPA spec — 7 códigos oficiales) ───────────────
+export type CodigoError = 1 | 2 | 3 | 4 | 5 | 6 | 7;
+// 1=Automático(OK) | 2=Manual | 3=Alimentación | 4=Conectividad | 5=Config | 6=Obstrucción | 7=Firmware
 
 export interface ErrorMedidor {
   readonly codigo: CodigoError;
   readonly descripcion: string;
-  readonly critico: boolean; // errores 3,4,5 son críticos (requieren mantenimiento)
+  readonly critico: boolean; // errores 3-7 son críticos (requieren mantenimiento)
 }
 
 export const ERROR_CODES: Record<CodigoError, ErrorMedidor> = {
-  1: { codigo: 1, descripcion: 'Error de Lectura',    critico: false },
-  2: { codigo: 2, descripcion: 'Error de Calibración',critico: false },
-  3: { codigo: 3, descripcion: 'Error de Alimentación',critico: true },
-  4: { codigo: 4, descripcion: 'Error de Conectividad',critico: true },
-  5: { codigo: 5, descripcion: 'Error de Configuración',critico: true },
+  1: { codigo: 1, descripcion: 'Automático (Bien)',                       critico: false },
+  2: { codigo: 2, descripcion: 'Manual',                                  critico: false },
+  3: { codigo: 3, descripcion: 'Falla en la alimentación eléctrica',      critico: true  },
+  4: { codigo: 4, descripcion: 'Fallo en la conectividad de red',         critico: true  },
+  5: { codigo: 5, descripcion: 'Configuración incorrecta del sensor o gateway', critico: true },
+  6: { codigo: 6, descripcion: 'Obstrucción o daño en el caudalímetro',  critico: true  },
+  7: { codigo: 7, descripcion: 'Problemas de firmware o software embebido', critico: true },
 };
 
 // ─── Medidor inteligente ──────────────────────────────────────────────────────
@@ -88,7 +90,7 @@ export interface Inmueble {
 
 // ─── Tramo de facturación ─────────────────────────────────────────────────────
 export interface TramoFactura {
-  readonly tramo:    1 | 2 | 3;
+  readonly tramo:    1 | 2 | 3 | 4 | 5 | 6;
   readonly m3:       number;
   readonly precio:   number;           // Bs/m³
   readonly subtotal: number;           // Bs
@@ -102,7 +104,7 @@ export interface Factura {
   readonly cargo_fijo:    number;        // Bs (cubre 12m³ base)
   readonly cargo_consumo: number;        // Bs (excedente por tramos)
   readonly total:         number;        // Bs
-  readonly tramo_activo:  1 | 2 | 3;
+  readonly tramo_activo:  1 | 2 | 3 | 4 | 5 | 6;
   readonly desglose:      TramoFactura[];
 }
 

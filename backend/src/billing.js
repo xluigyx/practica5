@@ -1,59 +1,43 @@
 // backend/src/billing.js
-// Algoritmo de facturación — Tarifario 9 categorías SEMAPA
+// Tarifario oficial SEMAPA — 9 categorías, 6 tramos, cargo fijo 12m³ base
 
+//                            Fijo(Bs)  T1(13-25) T2(26-50) T3(51-75) T4(76-100) T5(101-150) T6(>151)
 const TARIFARIO = {
-  'R1-Preferencial':       { cargo_fijo:  8.50, t1_lim:10, t1_p:0.90, t2_lim:20, t2_p:1.20, t3_p:2.10 },
-  'R2-Social':             { cargo_fijo: 10.00, t1_lim:15, t1_p:1.10, t2_lim:25, t2_p:1.60, t3_p:2.50 },
-  'R3-Residencial':        { cargo_fijo: 12.50, t1_lim:20, t1_p:1.40, t2_lim:35, t2_p:2.10, t3_p:3.20 },
-  'R4-Residencial Alta':   { cargo_fijo: 15.00, t1_lim:20, t1_p:1.80, t2_lim:45, t2_p:2.80, t3_p:4.50 },
-  'Comercial':             { cargo_fijo: 25.00, t1_lim:30, t1_p:2.50, t2_lim:60, t2_p:3.80, t3_p:5.20 },
-  'CE-Comercial Especial': { cargo_fijo: 35.00, t1_lim:30, t1_p:3.00, t2_lim:70, t2_p:4.50, t3_p:6.00 },
-  'Industrial':            { cargo_fijo: 45.00, t1_lim:50, t1_p:3.20, t2_lim:100,t2_p:4.60, t3_p:6.80 },
-  'P-Provisional':         { cargo_fijo: 20.00, t1_lim:15, t1_p:2.20, t2_lim:30, t2_p:3.20, t3_p:5.00 },
-  'S-Social':              { cargo_fijo:  6.00, t1_lim: 8, t1_p:0.70, t2_lim:15, t2_p:1.00, t3_p:1.80 },
+  'R1-Residencial':       { cargo_fijo:  16.74, tramos:[{hasta:25,precio:1.10},{hasta:50,precio:1.26},{hasta:75,precio:1.87},{hasta:100,precio:2.39},{hasta:150,precio:2.84},{hasta:Infinity,precio:3.34}] },
+  'R2-Residencial':       { cargo_fijo:  33.37, tramos:[{hasta:25,precio:1.78},{hasta:50,precio:1.98},{hasta:75,precio:2.96},{hasta:100,precio:3.59},{hasta:150,precio:4.16},{hasta:Infinity,precio:4.75}] },
+  'R3-Residencial':       { cargo_fijo:  62.57, tramos:[{hasta:25,precio:2.17},{hasta:50,precio:3.38},{hasta:75,precio:3.76},{hasta:100,precio:4.36},{hasta:150,precio:4.96},{hasta:Infinity,precio:5.54}] },
+  'R4-Residencial Alta':  { cargo_fijo: 104.22, tramos:[{hasta:25,precio:2.58},{hasta:50,precio:2.80},{hasta:75,precio:4.39},{hasta:100,precio:4.99},{hasta:150,precio:5.59},{hasta:Infinity,precio:6.20}] },
+  'C-Comercial':          { cargo_fijo: 125.16, tramos:[{hasta:25,precio:5.35},{hasta:50,precio:5.73},{hasta:75,precio:6.14},{hasta:100,precio:6.53},{hasta:150,precio:6.92},{hasta:Infinity,precio:7.34}] },
+  'CE-Comercial Especial':{ cargo_fijo: 145.98, tramos:[{hasta:25,precio:8.72},{hasta:50,precio:8.72},{hasta:75,precio:9.12},{hasta:100,precio:9.50},{hasta:150,precio:9.90},{hasta:Infinity,precio:10.29}] },
+  'I-Industrial':         { cargo_fijo: 112.64, tramos:[{hasta:25,precio:4.95},{hasta:50,precio:5.66},{hasta:75,precio:5.94},{hasta:100,precio:6.33},{hasta:150,precio:6.73},{hasta:Infinity,precio:7.11}] },
+  'P-Preferencial':       { cargo_fijo:  54.96, tramos:[{hasta:25,precio:2.17},{hasta:50,precio:2.39},{hasta:75,precio:2.96},{hasta:100,precio:3.35},{hasta:150,precio:3.76},{hasta:Infinity,precio:4.16}] },
+  'S-Social':             { cargo_fijo:  91.72, tramos:[{hasta:25,precio:3.57},{hasta:50,precio:3.77},{hasta:75,precio:3.96},{hasta:100,precio:4.35},{hasta:150,precio:4.75},{hasta:Infinity,precio:5.15}] },
 };
 
 const UMBRAL_EXCESO_ONU = 45; // m³/mes
 
-/**
- * Calcula la factura mensual aplicando el tarifario de 9 categorías.
- * - cargo_fijo: cubre los primeros 12m³ base
- * - excedente: se cobra por tramos (t1, t2, t3) sobre los m³ adicionales
- */
 function calcularFactura(categoria, consumoM3) {
   const t = TARIFARIO[categoria];
   if (!t) throw new Error(`Categoría desconocida: ${categoria}`);
 
-  const esExcesivo = consumoM3 > UMBRAL_EXCESO_ONU;
-  const excedente  = Math.max(0, consumoM3 - 12);
-  const desglose   = [];
+  const desglose = [];
   let cargo_consumo = 0;
+  let desde = 12; // base cubierta por cargo fijo
 
-  if (excedente > 0) {
-    const t1m3 = Math.min(excedente, t.t1_lim);
-    if (t1m3 > 0) {
-      const sub = +(t1m3 * t.t1_p).toFixed(2);
-      desglose.push({ tramo: 1, m3: t1m3, precio: t.t1_p, subtotal: sub });
-      cargo_consumo += sub;
-    }
-    if (excedente > t.t1_lim) {
-      const t2m3 = Math.min(excedente - t.t1_lim, t.t2_lim - t.t1_lim);
-      const sub  = +(t2m3 * t.t2_p).toFixed(2);
-      desglose.push({ tramo: 2, m3: t2m3, precio: t.t2_p, subtotal: sub });
-      cargo_consumo += sub;
-    }
-    if (excedente > t.t2_lim) {
-      const t3m3 = excedente - t.t2_lim;
-      const sub  = +(t3m3 * t.t3_p).toFixed(2);
-      desglose.push({ tramo: 3, m3: t3m3, precio: t.t3_p, subtotal: sub });
-      cargo_consumo += sub;
-    }
-  }
+  t.tramos.forEach((tr, idx) => {
+    if (consumoM3 <= desde) return;
+    const m3 = Math.min(consumoM3, tr.hasta) - desde;
+    if (m3 <= 0) return;
+    const sub = +(m3 * tr.precio).toFixed(2);
+    desglose.push({ tramo: idx + 1, m3, precio: tr.precio, subtotal: sub });
+    cargo_consumo += sub;
+    desde = tr.hasta === Infinity ? consumoM3 : tr.hasta;
+  });
 
   return {
     categoria,
     consumoM3,
-    esExcesivo,
+    esExcesivo:    consumoM3 > UMBRAL_EXCESO_ONU,
     cargo_fijo:    t.cargo_fijo,
     cargo_consumo: +cargo_consumo.toFixed(2),
     total:         +(t.cargo_fijo + cargo_consumo).toFixed(2),

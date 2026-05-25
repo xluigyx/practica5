@@ -1,11 +1,10 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { Search, X, Droplets, FileText, Printer, MessageSquare, Mail, Phone, CheckCircle, AlertTriangle, XCircle, ChevronDown, Delete, Clock, Copy, CreditCard, Coins, RefreshCw, Check } from 'lucide-react';
+import { Search, X, Droplets, FileText, Printer, MessageSquare, Mail, Phone, CheckCircle, AlertTriangle, XCircle, ChevronDown, Delete, Clock, Copy, CreditCard, RefreshCw, Check } from 'lucide-react';
 import { cn } from './lib/utils';
-import { buscarInmueble, calcularFactura } from './lib/semapa-data';
 import type { Inmueble, EstadoServicio } from './lib/types';
 
 // API URL resolved dynamically
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:4000';
+const API_URL = (import.meta as any).env?.VITE_API_URL || 'http://localhost:4000';
 
 // ─── On-screen keyboard ───────────────────────────────────────────────────────
 const ROWS_ALPHA = [
@@ -82,7 +81,6 @@ interface DynamicBreakdown {
 
 // ─── Receipt generator ────────────────────────────────────────────────────────
 function printRecibo(i: Inmueble, paidMonths: string[], totalBs: number, metodo: 'bnb' | 'qr_simple' = 'bnb', bnbAmount?: number, txHash?: string) {
-  const f = calcularFactura(i.categoria, i.consumoActualM3);
   const w = 270;
 
   let paymentSection = '';
@@ -283,7 +281,6 @@ export default function App() {
   const [loading, setLoading] = useState(false);
   const [result, setResult]   = useState<Inmueble | null>(null);
   const [notFound, setNotFound]= useState(false);
-  const [showDesg, setShowDesg]= useState(false);
   const [timer, setTimer]     = useState(60);
   const timerRef              = useRef<ReturnType<typeof setInterval> | null>(null);
 
@@ -308,15 +305,27 @@ export default function App() {
   const [txHash, setTxHash] = useState<string | null>(null);
   const [confirmations, setConfirmations] = useState<number>(0);
   const [paymentStatus, setPaymentStatus] = useState<'esperando' | 'detectado' | 'completado'>('esperando');
-  const [blockNumber, setBlockNumber] = useState<number | null>(null);
-  const [verifying, setVerifying] = useState(false);
+
+  // Factura from backend (avoids frontend/backend category key mismatch)
+  const [facturaReal, setFacturaReal] = useState<{ cargo_fijo: number; cargo_consumo: number; total: number; desglose: { tramo: number; m3: number; precio: number; subtotal: number }[] } | null>(null);
+
+  // Consumption history (last 6 months from Cassandra)
+  const [historial, setHistorial] = useState<{ periodo: string; consumo: number }[]>([]);
+  const [showHistorial, setShowHistorial] = useState(false);
+  // Incident / leak report
+  const [showReport, setShowReport] = useState(false);
+  const [reportType, setReportType] = useState('');
+  const [reportSent, setReportSent] = useState(false);
 
   const reset = useCallback(() => {
     setStep('home'); setQuery(''); setResult(null);
-    setNotFound(false); setShowDesg(false); setTimer(60);
+    setNotFound(false); setTimer(60);
     setBreakdown(null); setSelectedMonths([]);
     setIsPaying(false); setPaymentDetails(null);
     setTxHash(null); setConfirmations(0); setPaymentStatus('esperando');
+    setFacturaReal(null);
+    setHistorial([]); setShowHistorial(false);
+    setShowReport(false); setReportType(''); setReportSent(false);
   }, []);
 
   // Inactivity countdown
@@ -354,8 +363,10 @@ export default function App() {
       }
       const data = await response.json();
       setResult(data.inmueble);
+      setFacturaReal(data.factura || null);
       setStep('result');
-      
+      void fetchHistorial(data.inmueble.medidorSerie);
+
       // 2. Fetch detailed dynamic monthly breakdown
       const breakdownResponse = await fetch(`${API_URL}/api/pagos/desglose/${data.inmueble.contrato}`);
       if (breakdownResponse.ok) {
@@ -370,59 +381,34 @@ export default function App() {
         }
       }
     } catch (err) {
-      console.warn('[Kiosk Search] Fallback to frontend mock search: ', err);
-      // Fallback to local frontend mock data
-      const found = buscarInmueble(query);
-      if (found) {
-        setResult(found);
-        setStep('result');
-        
-        // Simular desglose
-        const mesesMora = found.deudaTotal > 0 ? (found.contrato === 'CBB-00448821' ? 6 : found.contrato === 'CBB-00291122' ? 11 : 4) : 0;
-        const desgloseSimulado: FacturaDesgloseItem[] = [];
-        const nombresMeses = ["Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio", "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"];
-        
-        let anio = 2025;
-        let mesIdx = 3; // Abril
-        const montoMensual = mesesMora > 0 ? parseFloat((found.deudaTotal / mesesMora).toFixed(2)) : 0;
-        
-        for (let i = 0; i < mesesMora; i++) {
-          desgloseSimulado.unshift({
-            id: mesesMora - i,
-            periodo: `${anio}-${String(mesIdx + 1).padStart(2, '0')}`,
-            nombre: `${nombresMeses[mesIdx]} ${anio}`,
-            monto: i === mesesMora - 1 ? parseFloat((found.deudaTotal - (montoMensual * (mesesMora - 1))).toFixed(2)) : montoMensual,
-            estado: 'vencido'
-          });
-          mesIdx--; if (mesIdx < 0) { mesIdx = 11; anio--; }
-        }
-
-        const fact = calcularFactura(found.categoria, found.consumoActualM3);
-
-        const breakdownSimulado: DynamicBreakdown = {
-          contrato: found.contrato,
-          deudaTotal: found.deudaTotal,
-          mesesDeuda: mesesMora,
-          desgloseVencido: desgloseSimulado,
-          facturaActual: {
-            periodo: '2025-05',
-            nombre: 'Mayo 2025 (Mes Actual)',
-            monto: fact.total,
-            estado: 'pendiente'
-          }
-        };
-
-        setBreakdown(breakdownSimulado);
-        if (desgloseSimulado.length > 0) {
-          setSelectedMonths([desgloseSimulado[0].periodo]);
-        } else {
-          setSelectedMonths(['2025-05']);
-        }
-      } else {
-        setNotFound(true);
-      }
+      console.warn('[Kiosk Search] Error al buscar en Cassandra:', err);
+      setNotFound(true);
     } finally {
       setLoading(false);
+    }
+  };
+
+  // Fetch last 6 months of meter readings from Cassandra
+  const fetchHistorial = async (serie: string) => {
+    const months: string[] = [];
+    const now = new Date();
+    for (let i = 0; i < 6; i++) {
+      const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+      months.push(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`);
+    }
+    try {
+      const results = await Promise.all(
+        months.map(async (periodo) => {
+          const r = await fetch(`${API_URL}/api/lecturas/${encodeURIComponent(serie)}?periodo=${periodo}`);
+          const rows: { consumo_m3?: number }[] = r.ok ? await r.json() : [];
+          const consumo = rows.reduce((sum, row) => sum + (row.consumo_m3 || 0), 0);
+          return { periodo, consumo: Math.round(consumo * 10) / 10 };
+        })
+      );
+      setHistorial(results.filter(h => h.consumo > 0).reverse());
+    } catch (e) {
+      console.warn('[Historial]', e);
+      setHistorial([]);
     }
   };
 
@@ -462,7 +448,7 @@ export default function App() {
     }, 0);
   };
 
-  const handleInitiatePayment = async (metodo: 'qr_simple' = 'qr_simple') => {
+  const handleInitiatePayment = async () => {
     resetCountdown();
     if (!result || selectedMonths.length === 0) return;
     
@@ -471,7 +457,6 @@ export default function App() {
     setPaymentStatus('esperando');
     setConfirmations(0);
     setTxHash(null);
-    setBlockNumber(null);
     setPaymentDetails(null);
 
     try {
@@ -533,7 +518,6 @@ export default function App() {
   // Simulate payment broadcast (from crypto wallet app or bank app)
   const handleSimulatePaymentBroadcast = async () => {
     if (!paymentDetails) return;
-    setVerifying(true);
     resetCountdown();
 
     try {
@@ -545,7 +529,6 @@ export default function App() {
       });
       const data = await res.json();
       setTxHash(data.txHash);
-      setBlockNumber(data.blockNumber || null);
       setPaymentStatus('detectado');
       setConfirmations(0);
       
@@ -561,7 +544,6 @@ export default function App() {
           if (checkData.status === 'completado' || currentConfirmations >= 3) {
             clearInterval(pollInterval);
             setPaymentStatus('completado');
-            setVerifying(false);
           }
         } catch (err) {
           console.warn('[Poll Error]', err);
@@ -571,7 +553,6 @@ export default function App() {
           if (currentConfirmations >= 3) {
             clearInterval(pollInterval);
             setPaymentStatus('completado');
-            setVerifying(false);
           }
         }
       }, 1800);
@@ -582,7 +563,6 @@ export default function App() {
       if (paymentDetails.metodo === 'qr_simple') {
         const txRef = 'TXN-' + Math.floor(10000000 + Math.random() * 90000000);
         setTxHash(txRef);
-        setBlockNumber(null);
         setPaymentStatus('detectado');
         
         let count = 0;
@@ -592,13 +572,11 @@ export default function App() {
           if (count >= 3) {
             clearInterval(t);
             setPaymentStatus('completado');
-            setVerifying(false);
           }
         }, 1500);
       } else {
         const mockHash = '0x' + Array.from({ length: 64 }, () => Math.floor(Math.random() * 16).toString(16)).join('');
         setTxHash(mockHash);
-        setBlockNumber(38491024);
         setPaymentStatus('detectado');
         
         let count = 0;
@@ -608,18 +586,10 @@ export default function App() {
           if (count >= 3) {
             clearInterval(t);
             setPaymentStatus('completado');
-            setVerifying(false);
           }
         }, 1500);
       }
     }
-  };
-
-  const copyToClipboard = () => {
-    if (!paymentDetails) return;
-    navigator.clipboard.writeText(paymentDetails.wallet);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
   };
 
   const handleFinishPayment = async () => {
@@ -819,9 +789,9 @@ export default function App() {
         <div className="flex flex-wrap gap-2 justify-center">
           <p className="w-full text-center text-xs text-white/35 font-bold uppercase tracking-widest mb-1">Acceso Rápido de Pruebas</p>
           {[
-            { l:'García (Al Día)', v:'CBB-00123456' },
-            { l:'Ind. El Prado (Deuda)', v:'CBB-00291122' },
-            { l:'Torres (Deuda)', v:'CBB-00448821' }
+            { l:'Al Día',  v:'CT-00044892' },
+            { l:'Moroso',  v:'CT-00000865' },
+            { l:'Por CI',  v:'6972118 CBBA' },
           ].map(e=>(
             <button key={e.v} onClick={() => { setQuery(e.v); resetCountdown(); }}
               className="px-4 py-2 rounded-xl bg-white/5 border border-white/10 text-white/70 text-xs font-mono hover:bg-white/20 transition-all">
@@ -854,7 +824,7 @@ export default function App() {
 
   // ── RESULT ──────────────────────────────────────────────────────────────────
   if (step === 'result' && result) {
-    const factura = calcularFactura(result.categoria, result.consumoActualM3);
+    const factura = facturaReal ?? { cargo_fijo: 0, cargo_consumo: 0, total: 0, desglose: [] };
     const total   = factura.total + result.deudaTotal;
     const cfg     = EST[result.estadoServicio];
     const exceso  = result.consumoActualM3 > 45;
@@ -863,6 +833,8 @@ export default function App() {
       : { label:'Activo', color:'#34d399', bg:'rgba(16,185,129,0.15)' };
 
     const totalSelectedBs = getSelectedMonthsSum();
+    const maxConsumo = Math.max(...historial.map(x => x.consumo), 1);
+    const MESES = ['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'];
 
     return (
       <div className="min-h-screen max-h-screen overflow-y-auto bg-[#040913] flex flex-col items-center gap-5 p-6 pb-10 select-none touch-manipulation" onPointerDown={resetCountdown}>
@@ -931,6 +903,45 @@ export default function App() {
                 {result.consumoActualM3} m³
               </p>
             </div>
+          </div>
+
+          {/* Consumption history */}
+          <div className="rounded-2xl border border-white/10 bg-white/5 overflow-hidden">
+            <button
+              onPointerDown={() => { setShowHistorial(s => !s); resetCountdown(); }}
+              className="w-full flex items-center justify-between px-5 py-4 text-left touch-manipulation">
+              <div className="flex items-center gap-2">
+                <span className="text-lg">📊</span>
+                <span className="font-bold text-white text-sm">Historial de Consumo (últimos 6 meses)</span>
+              </div>
+              <ChevronDown className={cn('w-4 h-4 text-white/50 transition-transform', showHistorial ? 'rotate-180' : '')} />
+            </button>
+            {showHistorial && (
+              <div className="px-5 pb-4 border-t border-white/10 space-y-3 pt-3">
+                {historial.length === 0 ? (
+                  <p className="text-center text-white/40 text-sm py-2">Sin lecturas registradas en Cassandra</p>
+                ) : historial.map(h => {
+                  const [yr, mo] = h.periodo.split('-');
+                  const label = `${MESES[parseInt(mo) - 1]} ${yr}`;
+                  const pct = Math.round((h.consumo / maxConsumo) * 100);
+                  const over = h.consumo > 45;
+                  return (
+                    <div key={h.periodo} className="space-y-1">
+                      <div className="flex justify-between text-xs">
+                        <span className="text-white/60 font-mono">{label}</span>
+                        <span className={cn('font-bold font-mono', over ? 'text-red-400' : 'text-green-400')}>
+                          {h.consumo.toFixed(1)} m³{over ? ' ⚠' : ''}
+                        </span>
+                      </div>
+                      <div className="h-2 rounded-full bg-white/10 overflow-hidden">
+                        <div className="h-full rounded-full transition-all duration-500"
+                          style={{ width: `${pct}%`, background: over ? '#f87171' : '#34d399' }} />
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
           </div>
 
           {/* Chronological Month Separations Selection Panel */}
@@ -1062,7 +1073,7 @@ export default function App() {
               </div>
               <div className="flex flex-col sm:flex-row gap-3 w-full">
                 <button 
-                  onClick={() => handleInitiatePayment('qr_simple')}
+                  onClick={() => handleInitiatePayment()}
                   disabled={selectedMonths.length === 0}
                   className="flex items-center justify-center gap-3 px-8 py-5 rounded-2xl font-black text-base text-white shadow-xl bg-gradient-to-r from-blue-600 via-indigo-600 to-cyan-600 hover:brightness-110 active:scale-95 transition-all disabled:opacity-40 disabled:pointer-events-none w-full">
                   <CreditCard className="w-6 h-6 text-white animate-pulse" /> PAGAR CON QR SIMPLE (BANCO BNB)
@@ -1110,6 +1121,12 @@ export default function App() {
                 </button>
               ))}
             </div>
+            <button
+              onPointerDown={() => { setShowReport(true); resetCountdown(); }}
+              className="w-full flex items-center justify-center gap-3 py-4 rounded-2xl font-bold text-sm active:scale-95 transition-all touch-manipulation"
+              style={{ background:'rgba(249,115,22,0.12)', color:'#fb923c', border:'1px solid rgba(249,115,22,0.25)' }}>
+              <AlertTriangle className="w-4 h-4" /> REPORTAR FUGA / RECLAMO
+            </button>
           </div>
 
           <button onClick={reset}
@@ -1117,6 +1134,70 @@ export default function App() {
             ← Volver al Buscador
           </button>
         </div>
+
+        {/* ─── REPORTE DE FUGA / RECLAMO MODAL ───────────────────────────── */}
+        {showReport && (
+          <div className="fixed inset-0 z-50 bg-[#02050b]/90 flex items-center justify-center p-4 backdrop-blur-md animate-in fade-in duration-200 touch-manipulation">
+            <div className="w-full max-w-md bg-gradient-to-b from-[#09152a] to-[#040a15] rounded-[32px] border border-white/10 p-6 space-y-5 shadow-2xl animate-in zoom-in-95 duration-200">
+              <div className="flex items-center justify-between">
+                <h3 className="text-xl font-black text-white">📢 Reportar Incidencia</h3>
+                <button onPointerDown={() => { setShowReport(false); setReportSent(false); setReportType(''); resetCountdown(); }}
+                  className="p-2 rounded-full bg-white/10 text-white hover:bg-white/20 transition-all">
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+
+              {!reportSent ? (
+                <>
+                  <p className="text-sm text-white/60">
+                    Contrato <strong className="text-blue-400">{result.contrato}</strong> · {result.nombre}
+                  </p>
+                  <div className="grid grid-cols-2 gap-3">
+                    {['Fuga de agua', 'Presión baja', 'Medidor dañado', 'Sin suministro', 'Error en factura', 'Otro reclamo'].map(t => (
+                      <button key={t} onPointerDown={() => { setReportType(t); resetCountdown(); }}
+                        className={cn(
+                          'py-4 rounded-2xl text-sm font-bold border transition-all active:scale-95 touch-manipulation',
+                          reportType === t
+                            ? 'bg-orange-500/20 border-orange-500 text-orange-300'
+                            : 'bg-white/5 border-white/15 text-white/70 hover:bg-white/10'
+                        )}>
+                        {t}
+                      </button>
+                    ))}
+                  </div>
+                  <button
+                    onPointerDown={() => {
+                      if (!reportType) return;
+                      const msg = encodeURIComponent(
+                        `📢 REPORTE TÓTEM SEMAPA\nContrato: ${result.contrato}\nNombre: ${result.nombre}\nDistrito: D-${result.distritoId}\nTipo: ${reportType}\nFecha: ${new Date().toLocaleString('es-BO')}`
+                      );
+                      window.open(`https://wa.me/59162658425?text=${msg}`, '_blank');
+                      setReportSent(true);
+                    }}
+                    disabled={!reportType}
+                    className="w-full py-5 rounded-2xl text-white font-black text-base active:scale-95 transition-all disabled:opacity-40 touch-manipulation"
+                    style={{ background:'linear-gradient(135deg,#f97316,#ef4444)' }}>
+                    📤 ENVIAR REPORTE VÍA WHATSAPP
+                  </button>
+                </>
+              ) : (
+                <div className="text-center py-6 space-y-3">
+                  <div className="w-16 h-16 rounded-full bg-green-500/20 flex items-center justify-center mx-auto border border-green-500/40">
+                    <CheckCircle className="w-9 h-9 text-green-400" />
+                  </div>
+                  <p className="text-lg font-black text-white">¡Reporte enviado!</p>
+                  <p className="text-sm text-white/60">
+                    Tu reclamo <strong className="text-orange-300">{reportType}</strong> fue enviado al equipo SEMAPA vía WhatsApp. Un técnico se comunicará contigo.
+                  </p>
+                  <button onPointerDown={() => { setShowReport(false); setReportSent(false); setReportType(''); resetCountdown(); }}
+                    className="mt-2 px-8 py-3 rounded-xl bg-white/10 text-white font-bold text-sm hover:bg-white/20 transition-all active:scale-95">
+                    Cerrar
+                  </button>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
 
         {/* ─── PREMIUM PAGO CON QR SIMPLE (BANCO BNB) MODAL ──────────────── */}
         {isPaying && (
@@ -1130,7 +1211,6 @@ export default function App() {
                     void handleFinishPayment();
                   } else {
                     setIsPaying(false);
-                    setVerifying(false);
                     setPaymentStatus('esperando');
                     setTxHash(null);
                     setConfirmations(0);

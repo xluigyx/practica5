@@ -10,81 +10,54 @@ import type {
 } from './types';
 import { esConsumoExcesivo, calcularAntiguedadAnios } from './utils';
 
-// ─── Tarifario SEMAPA (Tarifario.csv) ─────────────────────────────────────────
-// cargo_fijo cubre los primeros 12m³ base
-// tramos: 13-25 | 26-50 | >50 m³
+// ─── Tarifario SEMAPA oficial (Tarifario.csv) ─────────────────────────────────
+// cargo_fijo cubre los primeros 12m³ base (cuota fija mensual)
+// 6 tramos sobre el excedente: 13-25 | 26-50 | 51-75 | 76-100 | 101-150 | >151 m³
 export interface TarifaDetalle {
-  readonly cargo_fijo:       number;   // Bs
-  readonly tramo1_limite:    number;   // m³ máx tramo 1 (sobre los 12 base)
-  readonly tramo1_precio:    number;   // Bs/m³
-  readonly tramo2_limite:    number;   // m³ máx tramo 2 acumulado
-  readonly tramo2_precio:    number;   // Bs/m³
-  readonly tramo3_precio:    number;   // Bs/m³ (>tramo2_limite)
+  readonly cargo_fijo: number;                          // Bs/mes
+  readonly tramos: ReadonlyArray<{ hasta: number; precio: number }>; // hasta=m³ total, precio=Bs/m³
 }
 
+//                           Fijo(Bs)  T1(13-25) T2(26-50) T3(51-75) T4(76-100) T5(101-150) T6(>151)
 export const TARIFARIO: Record<TarifaCategoria, TarifaDetalle> = {
-  'R1-Preferencial':        { cargo_fijo:  8.50, tramo1_limite:10, tramo1_precio:0.90, tramo2_limite:20, tramo2_precio:1.20, tramo3_precio:2.10 },
-  'R2-Social':              { cargo_fijo: 10.00, tramo1_limite:15, tramo1_precio:1.10, tramo2_limite:25, tramo2_precio:1.60, tramo3_precio:2.50 },
-  'R3-Residencial':         { cargo_fijo: 12.50, tramo1_limite:20, tramo1_precio:1.40, tramo2_limite:35, tramo2_precio:2.10, tramo3_precio:3.20 },
-  'R4-Residencial Alta':    { cargo_fijo: 15.00, tramo1_limite:20, tramo1_precio:1.80, tramo2_limite:45, tramo2_precio:2.80, tramo3_precio:4.50 },
-  'Comercial':              { cargo_fijo: 25.00, tramo1_limite:30, tramo1_precio:2.50, tramo2_limite:60, tramo2_precio:3.80, tramo3_precio:5.20 },
-  'CE-Comercial Especial':  { cargo_fijo: 35.00, tramo1_limite:30, tramo1_precio:3.00, tramo2_limite:70, tramo2_precio:4.50, tramo3_precio:6.00 },
-  'Industrial':             { cargo_fijo: 45.00, tramo1_limite:50, tramo1_precio:3.20, tramo2_limite:100,tramo2_precio:4.60, tramo3_precio:6.80 },
-  'P-Provisional':          { cargo_fijo: 20.00, tramo1_limite:15, tramo1_precio:2.20, tramo2_limite:30, tramo2_precio:3.20, tramo3_precio:5.00 },
-  'S-Social':               { cargo_fijo:  6.00, tramo1_limite: 8, tramo1_precio:0.70, tramo2_limite:15, tramo2_precio:1.00, tramo3_precio:1.80 },
+  'R1-Residencial':      { cargo_fijo:  16.74, tramos:[{hasta:25,precio:1.10},{hasta:50,precio:1.26},{hasta:75,precio:1.87},{hasta:100,precio:2.39},{hasta:150,precio:2.84},{hasta:Infinity,precio:3.34}] },
+  'R2-Residencial':      { cargo_fijo:  33.37, tramos:[{hasta:25,precio:1.78},{hasta:50,precio:1.98},{hasta:75,precio:2.96},{hasta:100,precio:3.59},{hasta:150,precio:4.16},{hasta:Infinity,precio:4.75}] },
+  'R3-Residencial':      { cargo_fijo:  62.57, tramos:[{hasta:25,precio:2.17},{hasta:50,precio:3.38},{hasta:75,precio:3.76},{hasta:100,precio:4.36},{hasta:150,precio:4.96},{hasta:Infinity,precio:5.54}] },
+  'R4-Residencial Alta': { cargo_fijo: 104.22, tramos:[{hasta:25,precio:2.58},{hasta:50,precio:2.80},{hasta:75,precio:4.39},{hasta:100,precio:4.99},{hasta:150,precio:5.59},{hasta:Infinity,precio:6.20}] },
+  'C-Comercial':         { cargo_fijo: 125.16, tramos:[{hasta:25,precio:5.35},{hasta:50,precio:5.73},{hasta:75,precio:6.14},{hasta:100,precio:6.53},{hasta:150,precio:6.92},{hasta:Infinity,precio:7.34}] },
+  'CE-Comercial Especial':{ cargo_fijo:145.98, tramos:[{hasta:25,precio:8.72},{hasta:50,precio:8.72},{hasta:75,precio:9.12},{hasta:100,precio:9.50},{hasta:150,precio:9.90},{hasta:Infinity,precio:10.29}] },
+  'I-Industrial':        { cargo_fijo: 112.64, tramos:[{hasta:25,precio:4.95},{hasta:50,precio:5.66},{hasta:75,precio:5.94},{hasta:100,precio:6.33},{hasta:150,precio:6.73},{hasta:Infinity,precio:7.11}] },
+  'P-Preferencial':      { cargo_fijo:  54.96, tramos:[{hasta:25,precio:2.17},{hasta:50,precio:2.39},{hasta:75,precio:2.96},{hasta:100,precio:3.35},{hasta:150,precio:3.76},{hasta:Infinity,precio:4.16}] },
+  'S-Social':            { cargo_fijo:  91.72, tramos:[{hasta:25,precio:3.57},{hasta:50,precio:3.77},{hasta:75,precio:3.96},{hasta:100,precio:4.35},{hasta:150,precio:4.75},{hasta:Infinity,precio:5.15}] },
 };
 
 export const CATEGORIAS_LIST = Object.keys(TARIFARIO) as TarifaCategoria[];
 
-// ─── Algoritmo de facturación (Tarifario.csv rules) ──────────────────────────
-/**
- * Calcula la factura mensual aplicando el tarifario de 9 categorías.
- * - cargo_fijo: cubre los primeros 12m³
- * - Si consumo > 12m³: aplica precio por tramos sobre el excedente
- * - Si consumo > 45m³: marca como excesivo (ONU)
- */
+// ─── Algoritmo de facturación — 6 tramos oficiales SEMAPA ────────────────────
 export function calcularFactura(categoria: TarifaCategoria, consumoM3: number): Factura {
-  const t            = TARIFARIO[categoria];
-  const excesivo     = esConsumoExcesivo(consumoM3);
-  const excedente    = Math.max(0, consumoM3 - 12); // primeros 12m³ cubiertos por cargo fijo
+  const t = TARIFARIO[categoria];
   const desglose: TramoFactura[] = [];
-  let cargo_consumo  = 0;
-  let tramo_activo: 1 | 2 | 3 = 1;
+  let cargo_consumo = 0;
+  let tramo_activo: 1 | 2 | 3 | 4 | 5 | 6 = 1;
+  let desde = 12; // base cubierta por cargo fijo
 
-  if (excedente > 0) {
-    // Tramo 1
-    const t1m3 = Math.min(excedente, t.tramo1_limite);
-    if (t1m3 > 0) {
-      const sub = parseFloat((t1m3 * t.tramo1_precio).toFixed(2));
-      desglose.push({ tramo: 1, m3: t1m3, precio: t.tramo1_precio, subtotal: sub });
-      cargo_consumo += sub;
-      tramo_activo   = 1;
-    }
-
-    // Tramo 2
-    if (excedente > t.tramo1_limite) {
-      const t2m3 = Math.min(excedente - t.tramo1_limite, t.tramo2_limite - t.tramo1_limite);
-      const sub  = parseFloat((t2m3 * t.tramo2_precio).toFixed(2));
-      desglose.push({ tramo: 2, m3: t2m3, precio: t.tramo2_precio, subtotal: sub });
-      cargo_consumo += sub;
-      tramo_activo   = 2;
-    }
-
-    // Tramo 3
-    if (excedente > t.tramo2_limite) {
-      const t3m3 = excedente - t.tramo2_limite;
-      const sub  = parseFloat((t3m3 * t.tramo3_precio).toFixed(2));
-      desglose.push({ tramo: 3, m3: t3m3, precio: t.tramo3_precio, subtotal: sub });
-      cargo_consumo += sub;
-      tramo_activo   = 3;
-    }
-  }
+  t.tramos.forEach((tr, idx) => {
+    if (consumoM3 <= desde) return;
+    const m3 = Math.min(consumoM3, tr.hasta) - desde;
+    if (m3 <= 0) return;
+    const sub = parseFloat((m3 * tr.precio).toFixed(2));
+    const n = (idx + 1) as 1 | 2 | 3 | 4 | 5 | 6;
+    desglose.push({ tramo: n, m3, precio: tr.precio, subtotal: sub });
+    cargo_consumo += sub;
+    tramo_activo = n;
+    desde = tr.hasta === Infinity ? consumoM3 : tr.hasta;
+  });
 
   return {
     categoria,
     consumoM3,
-    esExcesivo:   excesivo,
-    cargo_fijo:   t.cargo_fijo,
+    esExcesivo:    esConsumoExcesivo(consumoM3),
+    cargo_fijo:    t.cargo_fijo,
     cargo_consumo: parseFloat(cargo_consumo.toFixed(2)),
     total:         parseFloat((t.cargo_fijo + cargo_consumo).toFixed(2)),
     tramo_activo,
@@ -92,22 +65,24 @@ export function calcularFactura(categoria: TarifaCategoria, consumoM3: number): 
   };
 }
 
-// ─── Datos de Distritos (14 distritos Cochabamba) ────────────────────────────
+// ─── Datos de Distritos (15 distritos — fuente: documento oficial práctica) ──
+// Tunari: 1,2,13 | Molle: 3,4 | Alejo Calatayud: 5,8 | Valle Hermoso: 6,7,14 | Itocta: 9,15 | Adela Zamudio: 10,11,12
 export const DISTRITOS: DistritoMetrics[] = [
-  { id:1,  name:'D-1 Norte',        subalcaldia:'Adela Zamudio', consumoM3:310, presionPSI:15.2, poblacion:52400,  medidoresActivos:8120,  medidoresTotal:8500,  cobertura:95.5, calidadICA:82, temperatura:18.2, status:'normal' },
-  { id:2,  name:'D-2 Noroeste',     subalcaldia:'Adela Zamudio', consumoM3:265, presionPSI:14.8, poblacion:41200,  medidoresActivos:6100,  medidoresTotal:6400,  cobertura:95.3, calidadICA:85, temperatura:17.8, status:'normal' },
-  { id:3,  name:'D-3 Quillacollo',  subalcaldia:'Adela Zamudio', consumoM3:290, presionPSI:13.5, poblacion:48600,  medidoresActivos:7200,  medidoresTotal:7600,  cobertura:94.7, calidadICA:79, temperatura:18.5, status:'normal' },
-  { id:4,  name:'D-4 Oeste',        subalcaldia:'Tunari',        consumoM3:285, presionPSI:11.8, poblacion:44800,  medidoresActivos:6600,  medidoresTotal:7100,  cobertura:92.9, calidadICA:76, temperatura:19.1, status:'mantenimiento' },
-  { id:5,  name:'D-5 Sureste',      subalcaldia:'Tunari',        consumoM3:320, presionPSI:16.1, poblacion:55200,  medidoresActivos:8400,  medidoresTotal:8800,  cobertura:95.4, calidadICA:88, temperatura:17.5, status:'normal' },
-  { id:6,  name:'D-6 Sur',          subalcaldia:'Tunari',        consumoM3:275, presionPSI:12.9, poblacion:43100,  medidoresActivos:6300,  medidoresTotal:6700,  cobertura:94.0, calidadICA:81, temperatura:19.8, status:'normal' },
-  { id:7,  name:'D-7 Valle H.',     subalcaldia:'Valle Hermoso', consumoM3:230, presionPSI:10.5, poblacion:38000,  medidoresActivos:5400,  medidoresTotal:5900,  cobertura:91.5, calidadICA:74, temperatura:20.2, status:'normal' },
-  { id:8,  name:'D-8 Temporal',     subalcaldia:'Valle Hermoso', consumoM3:195, presionPSI:9.8,  poblacion:32400,  medidoresActivos:4500,  medidoresTotal:5100,  cobertura:88.2, calidadICA:71, temperatura:21.0, status:'mantenimiento' },
-  { id:9,  name:'D-9 Molle',        subalcaldia:'Molle',         consumoM3:410, presionPSI:14.2, poblacion:58800,  medidoresActivos:8700,  medidoresTotal:9200,  cobertura:94.5, calidadICA:80, temperatura:18.8, status:'alta-demanda' },
-  { id:10, name:'D-10 Central',     subalcaldia:'Molle',         consumoM3:520, presionPSI:12.5, poblacion:64500,  medidoresActivos:9600,  medidoresTotal:10200, cobertura:94.1, calidadICA:78, temperatura:19.4, status:'critico' },
-  { id:11, name:'D-11 Itocta',      subalcaldia:'Itocta',        consumoM3:245, presionPSI:13.8, poblacion:40200,  medidoresActivos:5800,  medidoresTotal:6100,  cobertura:95.0, calidadICA:83, temperatura:18.0, status:'normal' },
-  { id:12, name:'D-12 Industrial',  subalcaldia:'Itocta',        consumoM3:480, presionPSI:11.2, poblacion:35600,  medidoresActivos:5100,  medidoresTotal:5400,  cobertura:94.4, calidadICA:65, temperatura:20.8, status:'critico' },
-  { id:13, name:'D-13 Lacma N.',    subalcaldia:'Lacma',         consumoM3:215, presionPSI:10.9, poblacion:37200,  medidoresActivos:5300,  medidoresTotal:5700,  cobertura:93.0, calidadICA:77, temperatura:19.2, status:'normal' },
-  { id:14, name:'D-14 Lacma S.',    subalcaldia:'Lacma',         consumoM3:342, presionPSI:13.1, poblacion:46800,  medidoresActivos:6900,  medidoresTotal:7300,  cobertura:94.5, calidadICA:82, temperatura:18.6, status:'normal' },
+  { id:1,  name:'QUERU QUERU / ARANJUEZ',   subalcaldia:'Tunari',          consumoM3:285, presionPSI:14.2, poblacion:25100, medidoresActivos:6272,  medidoresTotal:6600,  cobertura:95.0, calidadICA:83, temperatura:17.8, status:'normal' },
+  { id:2,  name:'CALA CALA / MAYORAZGO',    subalcaldia:'Tunari',          consumoM3:260, presionPSI:13.8, poblacion:28100, medidoresActivos:7028,  medidoresTotal:7400,  cobertura:95.1, calidadICA:83, temperatura:17.8, status:'normal' },
+  { id:3,  name:'SARCO / SARCOBAMBA',       subalcaldia:'Molle',           consumoM3:310, presionPSI:13.5, poblacion:44900, medidoresActivos:11231, medidoresTotal:11800, cobertura:95.2, calidadICA:80, temperatura:18.9, status:'normal' },
+  { id:4,  name:'COÑA COÑA / HIPODROMO',    subalcaldia:'Molle',           consumoM3:275, presionPSI:12.8, poblacion:24300, medidoresActivos:6085,  medidoresTotal:6400,  cobertura:95.2, calidadICA:80, temperatura:18.9, status:'normal' },
+  { id:5,  name:'JAIHUAYCO / LACMA',        subalcaldia:'Alejo Calatayud', consumoM3:320, presionPSI:15.1, poblacion:47700, medidoresActivos:11920, medidoresTotal:12500, cobertura:95.4, calidadICA:79, temperatura:19.1, status:'alta-demanda' },
+  { id:6,  name:'ALALAY NORTE',             subalcaldia:'Valle Hermoso',   consumoM3:295, presionPSI:14.0, poblacion:14100, medidoresActivos:3537,  medidoresTotal:3700,  cobertura:95.6, calidadICA:82, temperatura:18.1, status:'normal' },
+  { id:7,  name:'ALALAY SUD',               subalcaldia:'Valle Hermoso',   consumoM3:240, presionPSI:11.5, poblacion:13300, medidoresActivos:3330,  medidoresTotal:3500,  cobertura:95.1, calidadICA:82, temperatura:18.1, status:'normal' },
+  { id:8,  name:'TICTI / USPHA USPHA',      subalcaldia:'Alejo Calatayud', consumoM3:210, presionPSI:10.8, poblacion:20800, medidoresActivos:5190,  medidoresTotal:5500,  cobertura:94.4, calidadICA:76, temperatura:20.0, status:'mantenimiento' },
+  { id:9,  name:'PUKARA GRANDE / TAMBORADA',subalcaldia:'Itocta',          consumoM3:350, presionPSI:12.2, poblacion:52200, medidoresActivos:13045, medidoresTotal:13700, cobertura:95.2, calidadICA:68, temperatura:21.0, status:'normal' },
+  { id:10, name:'NOROESTE / NORESTE',       subalcaldia:'Adela Zamudio',   consumoM3:280, presionPSI:14.5, poblacion:21300, medidoresActivos:5324,  medidoresTotal:5600,  cobertura:95.1, calidadICA:81, temperatura:18.5, status:'normal' },
+  { id:11, name:'MUYURINA / LAS CUADRAS',   subalcaldia:'Adela Zamudio',   consumoM3:230, presionPSI:13.1, poblacion:14000, medidoresActivos:3509,  medidoresTotal:3700,  cobertura:94.8, calidadICA:80, temperatura:18.5, status:'normal' },
+  { id:12, name:'TUPURAYA / CALA CALA SUD', subalcaldia:'Adela Zamudio',   consumoM3:470, presionPSI:11.0, poblacion:40400, medidoresActivos:10090, medidoresTotal:10600, cobertura:95.2, calidadICA:77, temperatura:19.4, status:'critico' },
+  { id:13, name:'CARA CARA',                subalcaldia:'Tunari',          consumoM3:195, presionPSI:10.5, poblacion:6100,  medidoresActivos:1521,  medidoresTotal:1600,  cobertura:95.1, calidadICA:74, temperatura:18.6, status:'normal' },
+  { id:14, name:'VALLE HERMOSO SUD',        subalcaldia:'Valle Hermoso',   consumoM3:330, presionPSI:13.6, poblacion:23000, medidoresActivos:5743,  medidoresTotal:6000,  cobertura:95.8, calidadICA:82, temperatura:18.1, status:'normal' },
+  { id:15, name:'KHARA KHARA / PUKARA SUR', subalcaldia:'Itocta',          consumoM3:265, presionPSI:12.0, poblacion:24700, medidoresActivos:6175,  medidoresTotal:6500,  cobertura:94.9, calidadICA:68, temperatura:21.0, status:'normal' },
 ];
 
 // ─── Modelos de medidores — stats técnicos ────────────────────────────────────
@@ -140,13 +115,13 @@ export const RADIOBASES: Radiobase[] = Array.from({ length: 32 }, (_, i) => {
 // Simula SELECT … WHERE id_servicio=? (Cassandra primary key lookup)
 export const INMUEBLES: Inmueble[] = [
   { contrato:'CBB-00123456', ci:'7890123', nombre:'García Vargas, María Elena',   direccion:'Av. Ayacucho 1234',        zona:'Zona 1', distritoId:10, categoria:'R3-Residencial',      medidorSerie:'ITC100-123456',   medidorModelo:'ITC 100',  instalacion:'2021-03-15', estadoServicio:'al-dia',    consumoActualM3:22,  consumoAnteriorM3:19,  deudaTotal:0     },
-  { contrato:'CBB-00291122', ci:'4812003', nombre:'Industrias El Prado Ltda.',    direccion:'Av. Blanco Galindo Km 8',  zona:'Zona 1', distritoId:12, categoria:'Industrial',           medidorSerie:'OY1320-229912',   medidorModelo:'OY1320',   instalacion:'2019-08-01', estadoServicio:'moroso',    consumoActualM3:145, consumoAnteriorM3:138, deudaTotal:32100 },
+  { contrato:'CBB-00291122', ci:'4812003', nombre:'Industrias El Prado Ltda.',    direccion:'Av. Blanco Galindo Km 8',  zona:'Zona 1', distritoId:12, categoria:'I-Industrial',        medidorSerie:'OY1320-229912',   medidorModelo:'OY1320',   instalacion:'2019-08-01', estadoServicio:'moroso',    consumoActualM3:145, consumoAnteriorM3:138, deudaTotal:32100 },
   { contrato:'CBB-00448821', ci:'7123456', nombre:'Torres Mamani, Roberto',       direccion:'Calle Lanza 456',          zona:'Zona 3', distritoId:9,  categoria:'R4-Residencial Alta', medidorSerie:'WP20-448821',     medidorModelo:'WP20',     instalacion:'2022-05-20', estadoServicio:'moroso',    consumoActualM3:58,  consumoAnteriorM3:51,  deudaTotal:4280  },
-  { contrato:'CBB-00561234', ci:'5567890', nombre:'Quispe Laura, Pedro',          direccion:'Calle Baptista 789',       zona:'Zona 2', distritoId:5,  categoria:'R2-Social',           medidorSerie:'LAIN-561234',     medidorModelo:'LAIN IoT', instalacion:'2023-01-10', estadoServicio:'al-dia',    consumoActualM3:13,  consumoAnteriorM3:12,  deudaTotal:0     },
+  { contrato:'CBB-00561234', ci:'5567890', nombre:'Quispe Laura, Pedro',          direccion:'Calle Baptista 789',       zona:'Zona 2', distritoId:5,  categoria:'R2-Residencial',      medidorSerie:'LAIN-561234',     medidorModelo:'LAIN IoT', instalacion:'2023-01-10', estadoServicio:'al-dia',    consumoActualM3:13,  consumoAnteriorM3:12,  deudaTotal:0     },
   { contrato:'CBB-00672341', ci:'8901234', nombre:'Quispe Flores, Ana María',     direccion:'Pasaje Sucre 23',          zona:'Zona 4', distritoId:5,  categoria:'R3-Residencial',      medidorSerie:'LAIN-672341',     medidorModelo:'LAIN IoT', instalacion:'2022-11-30', estadoServicio:'moroso',    consumoActualM3:18,  consumoAnteriorM3:17,  deudaTotal:1960  },
-  { contrato:'CBB-00781122', ci:'3456789', nombre:'Agencia de Viajes Andes',      direccion:'Plaza 14 de Septiembre',  zona:'Zona 2', distritoId:3,  categoria:'Comercial',           medidorSerie:'ITC100-781122',   medidorModelo:'ITC 100',  instalacion:'2020-06-15', estadoServicio:'moroso',    consumoActualM3:38,  consumoAnteriorM3:35,  deudaTotal:6720  },
-  { contrato:'CBB-00891230', ci:'9012345', nombre:'Construcciones J&R SAC',       direccion:'Av. Industrial 890',       zona:'Zona 1', distritoId:12, categoria:'Industrial',          medidorSerie:'OY1320-891230',   medidorModelo:'OY1320',   instalacion:'2018-03-20', estadoServicio:'suspendido', consumoActualM3:210, consumoAnteriorM3:198, deudaTotal:24500 },
-  { contrato:'CBB-00334455', ci:'2234567', nombre:'Mamani Condori, Lucía',        direccion:'Calle Colombia 331',       zona:'Zona 3', distritoId:1,  categoria:'R1-Preferencial',     medidorSerie:'Siconia-334455',  medidorModelo:'Siconia',  instalacion:'2023-07-01', estadoServicio:'al-dia',    consumoActualM3:10,  consumoAnteriorM3:9,   deudaTotal:0     },
+  { contrato:'CBB-00781122', ci:'3456789', nombre:'Agencia de Viajes Andes',      direccion:'Plaza 14 de Septiembre',  zona:'Zona 2', distritoId:3,  categoria:'C-Comercial',         medidorSerie:'ITC100-781122',   medidorModelo:'ITC 100',  instalacion:'2020-06-15', estadoServicio:'moroso',    consumoActualM3:38,  consumoAnteriorM3:35,  deudaTotal:6720  },
+  { contrato:'CBB-00891230', ci:'9012345', nombre:'Construcciones J&R SAC',       direccion:'Av. Industrial 890',       zona:'Zona 1', distritoId:12, categoria:'I-Industrial',        medidorSerie:'OY1320-891230',   medidorModelo:'OY1320',   instalacion:'2018-03-20', estadoServicio:'suspendido', consumoActualM3:210, consumoAnteriorM3:198, deudaTotal:24500 },
+  { contrato:'CBB-00334455', ci:'2234567', nombre:'Mamani Condori, Lucía',        direccion:'Calle Colombia 331',       zona:'Zona 3', distritoId:1,  categoria:'R1-Residencial',      medidorSerie:'Siconia-334455',  medidorModelo:'Siconia',  instalacion:'2023-07-01', estadoServicio:'al-dia',    consumoActualM3:10,  consumoAnteriorM3:9,   deudaTotal:0     },
 ];
 
 // Simula Cassandra: SELECT WHERE contrato=? OR ci=? OR medidor_serie=?
@@ -161,9 +136,9 @@ export function buscarInmueble(query: string): Inmueble | null {
 
 // ─── Ranking de Morosos ───────────────────────────────────────────────────────
 export const MOROSOS: Moroso[] = [
-  { contrato:'CBB-00891230', nombre:'Construcciones J&R SAC',    zona:'Zona 1', distritoId:12, categoria:'Industrial',          deudaTotal:24500, mesesDeuda:9,  ultimoPago:'2024-08-10', medidorSerie:'OY1320-891230' },
-  { contrato:'CBB-00291122', nombre:'Industrias El Prado Ltda.',  zona:'Zona 1', distritoId:12, categoria:'Industrial',          deudaTotal:32100, mesesDeuda:11, ultimoPago:'2024-06-10', medidorSerie:'OY1320-229912' },
-  { contrato:'CBB-00781122', nombre:'Agencia de Viajes Andes',    zona:'Zona 2', distritoId:3,  categoria:'Comercial',           deudaTotal:6720,  mesesDeuda:5,  ultimoPago:'2024-12-10', medidorSerie:'ITC100-781122' },
+  { contrato:'CBB-00891230', nombre:'Construcciones J&R SAC',    zona:'Zona 1', distritoId:12, categoria:'I-Industrial',        deudaTotal:24500, mesesDeuda:9,  ultimoPago:'2024-08-10', medidorSerie:'OY1320-891230' },
+  { contrato:'CBB-00291122', nombre:'Industrias El Prado Ltda.',  zona:'Zona 1', distritoId:12, categoria:'I-Industrial',        deudaTotal:32100, mesesDeuda:11, ultimoPago:'2024-06-10', medidorSerie:'OY1320-229912' },
+  { contrato:'CBB-00781122', nombre:'Agencia de Viajes Andes',    zona:'Zona 2', distritoId:3,  categoria:'C-Comercial',         deudaTotal:6720,  mesesDeuda:5,  ultimoPago:'2024-12-10', medidorSerie:'ITC100-781122' },
   { contrato:'CBB-00448821', nombre:'Torres Mamani, Roberto',     zona:'Zona 3', distritoId:9,  categoria:'R4-Residencial Alta', deudaTotal:4280,  mesesDeuda:6,  ultimoPago:'2024-11-10', medidorSerie:'WP20-448821' },
   { contrato:'CBB-00672341', nombre:'Quispe Flores, Ana María',   zona:'Zona 4', distritoId:5,  categoria:'R3-Residencial',      deudaTotal:1960,  mesesDeuda:4,  ultimoPago:'2025-01-10', medidorSerie:'LAIN-672341' },
 ];

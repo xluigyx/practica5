@@ -21,7 +21,7 @@ function execAll(cql, params = []) {
     const rows = [];
     client.eachRow(
       cql, params,
-      { prepare: true, autoPage: true, fetchSize: 500000 },
+      { prepare: true, autoPage: true, fetchSize: 5000 },
       (_n, row) => rows.push(row),
       (err) => err ? reject(err) : resolve(rows)
     );
