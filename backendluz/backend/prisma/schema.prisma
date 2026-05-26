@@ -1,0 +1,203 @@
+generator client {
+  provider        = "prisma-client-js"
+  previewFeatures = ["postgresqlExtensions"]
+  binaryTargets   = ["linux-musl-openssl-3.0.x", "windows"]
+}
+
+datasource db {
+  provider   = "postgresql"
+  url        = env("DATABASE_URL")
+  extensions = [vector]
+}
+
+// ─── Enums ────────────────────────────────────────────────────────────────────
+
+enum Plan {
+  STARTER
+  PRO
+  BUSINESS
+}
+
+enum OrderStatus {
+  PENDING
+  CONFIRMED
+  PREPARING
+  IN_TRANSIT
+  DELIVERED
+  CANCELLED
+}
+
+enum UserRole {
+  ADMIN
+  DELIVERER
+}
+
+// ─── Modelos ──────────────────────────────────────────────────────────────────
+
+model Business {
+  id                        String    @id @default(cuid())
+  name                      String
+  whatsappNumber            String    @unique @map("whatsapp_number")
+  whatsappNumberDelivery    String?   @unique @map("whatsapp_number_delivery")
+  plan                      Plan      @default(STARTER)
+  hasDelivery               Boolean   @default(false) @map("has_delivery")
+  configJson                Json      @default("{}") @map("config_json")
+  createdAt                 DateTime  @default(now()) @map("created_at")
+  updatedAt                 DateTime  @updatedAt @map("updated_at")
+
+  // Relaciones
+  users         User[]
+  products      Product[]
+  customers     Customer[]
+  orders        Order[]
+  deliverers    Deliverer[]
+  conversations Conversation[]
+  analytics     DailyAnalytic[]
+
+  @@map("businesses")
+}
+
+model User {
+  id           String   @id @default(cuid())
+  businessId   String   @map("business_id")
+  email        String   @unique
+  passwordHash String   @map("password_hash")
+  role         UserRole @default(ADMIN)
+  totpSecret   String?  @map("totp_secret")
+  totpEnabled  Boolean  @default(false) @map("totp_enabled")
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  business Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+
+  @@map("users")
+}
+
+model Product {
+  id          String   @id @default(cuid())
+  businessId  String   @map("business_id")
+  name        String
+  description String
+  priceBs     Decimal  @map("price_bs") @db.Decimal(10, 2)
+  stock       Int      @default(0)
+  category    String
+  imageUrl    String?  @map("image_url")
+  available   Boolean  @default(true)
+  // Vector de 1536 dims para text-embedding-3-small
+  embedding   Unsupported("vector(1536)")?
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  business Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+
+  @@map("products")
+}
+
+model Customer {
+  id                  String   @id @default(cuid())
+  phone               String
+  name                String
+  businessId          String   @map("business_id")
+  purchaseHistoryJson Json     @default("[]") @map("purchase_history_json")
+  createdAt           DateTime @default(now()) @map("created_at")
+  updatedAt           DateTime @updatedAt @map("updated_at")
+
+  business      Business       @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  orders        Order[]
+  conversations Conversation[]
+
+  @@unique([phone, businessId])
+  @@map("customers")
+}
+
+model Deliverer {
+  id         String   @id @default(cuid())
+  businessId String   @map("business_id")
+  phone      String
+  name       String
+  active     Boolean  @default(true)
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  business Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  orders   Order[]
+
+  @@unique([phone, businessId])
+  @@map("deliverers")
+}
+
+model Order {
+  id              String      @id @default(cuid())
+  customerId      String      @map("customer_id")
+  businessId      String      @map("business_id")
+  delivererId     String?     @map("deliverer_id")
+  itemsJson       Json        @map("items_json")
+  status          OrderStatus @default(PENDING)
+  totalBs         Decimal     @map("total_bs") @db.Decimal(10, 2)
+  deliveryAddress String      @map("delivery_address")
+  qrUrl           String?     @map("qr_url")
+  paymentRef      String?     @map("payment_ref")
+  paidAt          DateTime?   @map("paid_at")
+  notes           String?
+  delivererLat    Float?      @map("deliverer_lat")
+  delivererLng    Float?      @map("deliverer_lng")
+  delivererUpdatedAt DateTime? @map("deliverer_updated_at")
+  createdAt       DateTime    @default(now()) @map("created_at")
+  updatedAt       DateTime    @updatedAt @map("updated_at")
+
+  customer  Customer   @relation(fields: [customerId], references: [id])
+  business  Business   @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  deliverer Deliverer? @relation(fields: [delivererId], references: [id])
+
+  @@map("orders")
+}
+
+model Conversation {
+  id            String   @id @default(cuid())
+  customerPhone String   @map("customer_phone")
+  businessId    String   @map("business_id")
+  customerId    String?  @map("customer_id")
+  messagesJson  Json     @default("[]") @map("messages_json")
+  escalated     Boolean  @default(false)
+  sessionStart  DateTime @default(now()) @map("session_start")
+  lastActivity  DateTime @default(now()) @map("last_activity")
+
+  business Business  @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  customer Customer? @relation(fields: [customerId], references: [id])
+  escalationFeedbacks EscalationFeedback[]
+
+  @@unique([customerPhone, businessId])
+  @@map("conversations")
+}
+
+model EscalationFeedback {
+  id             String   @id @default(cuid())
+  conversationId String   @map("conversation_id")
+  resolved       Boolean  @default(false)
+  resolutionNote String?  @map("resolution_note")
+  wasAiMistake   Boolean  @default(false) @map("was_ai_mistake")
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+
+  @@map("escalation_feedbacks")
+}
+
+model DailyAnalytic {
+  id                   String   @id @default(cuid())
+  businessId           String   @map("business_id")
+  date                 DateTime @db.Date
+  totalSalesBs         Decimal  @default(0) @map("total_sales_bs") @db.Decimal(12, 2)
+  totalOrders          Int      @default(0) @map("total_orders")
+  completedOrders      Int      @default(0) @map("completed_orders")
+  cancelledOrders      Int      @default(0) @map("cancelled_orders")
+  totalConversations   Int      @default(0) @map("total_conversations")
+  conversionRate       Decimal  @default(0) @map("conversion_rate") @db.Decimal(5, 4)
+  avgResponseTimeSec   Int      @default(0) @map("avg_response_time_sec")
+  escalations          Int      @default(0)
+  createdAt            DateTime @default(now()) @map("created_at")
+
+  business Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+
+  @@unique([businessId, date])
+  @@map("daily_analytics")
+}

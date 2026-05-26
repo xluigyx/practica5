@@ -1,0 +1,48 @@
+{
+  "name": "water-readings-frontend",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "dev": "expo start",
+    "android": "expo start --android",
+    "ios": "expo start --ios",
+    "web": "expo start --web",
+    "lint": "eslint . --ext .ts,.tsx",
+    "format": "prettier --write ."
+  },
+  "dependencies": {
+    "expo": "~56.0.4",
+    "expo-status-bar": "~1.12.1",
+    "expo-camera": "~13.1.2",
+    "expo-location": "~15.1.1",
+    "expo-image-picker": "~15.1.1",
+    "expo-constants": "~15.4.3",
+    "react": "19.2.0",
+    "react-native": "0.75.3",
+    "react-native-gesture-handler": "~2.14.0",
+    "react-native-reanimated": "~3.10.0",
+    "react-native-screens": "~4.0.0",
+    "react-native-safe-area-context": "~5.0.0",
+    "react-native-paper": "~5.15.0",
+    "@react-navigation/native": "^6.2.0",
+    "@react-navigation/native-stack": "^6.10.0",
+    "expo-router": "~3.3.0",
+    "axios": "^1.7.2",
+    "react-hook-form": "^7.53.1",
+    "zustand": "^5.0.0",
+    "@react-native-async-storage/async-storage": "^1.20.0",
+    "expo-splash-screen": "~0.23.5",
+    "expo-system-ui": "~4.2.2",
+    "expo-linear-gradient": "~13.2.1",
+    "expo-router": "~4.2.0",
+    "react-native-toast-message": "~2.2.0"
+  },
+  "devDependencies": {
+    "@babel/core": "^7.25.2",
+    "typescript": "^5.5.4",
+    "eslint": "^9.10.0",
+    "prettier": "^3.3.3",
+    "@types/react": "^19.0.0",
+    "@types/react-native": "^0.75.0"
+  }
+}
