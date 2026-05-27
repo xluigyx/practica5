@@ -599,7 +599,9 @@ export default function CochabambaMapV2({
 
           {/* ââ Debug zone id labels âââââââââââââââââââââââââââââââââââââââââââ */}
           {DEBUG_ZONES && COCHABAMBA_ZONE_PATHS.map(zone => (
-            <ZoneDebugLabel key={`dbg-${zone.id}`} d={zone.d} label={zone.id} />
+            <React.Fragment key={`dbg-${zone.id}`}>
+              <ZoneDebugLabel d={zone.d} label={zone.id} />
+            </React.Fragment>
           ))}
 
           {/* ââ Compass ââââââââââââââââââââââââââââââââââââââââââââââââââââââââ */}

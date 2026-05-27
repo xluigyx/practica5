@@ -8,6 +8,8 @@ const KS = process.env.CASSANDRA_KEYSPACE || 'semapa';
 const PERIODO = process.env.PERIODO_ACTIVO || '2026-02';
 // 1 m³ = 35.3147 pies³
 const M3_TO_FT3 = 35.3147;
+const CACHE_TTL_MS = Number(process.env.QUERIES_CACHE_TTL_MS || 60 * 1000);
+const queryCache = new Map();
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 async function exec(cql, params = []) {
@@ -28,6 +30,44 @@ function execAll(cql, params = []) {
   });
 }
 
+async function cachedRows(key, loader) {
+  const now = Date.now();
+  const cached = queryCache.get(key);
+  if (cached && cached.expiresAt > now) return cached.rows;
+
+  const rows = await loader();
+  queryCache.set(key, { rows, expiresAt: now + CACHE_TTL_MS });
+  return rows;
+}
+
+async function loadLecturasPeriodo(periodo = PERIODO) {
+  return cachedRows(`lecturas:${periodo}`, async () => {
+    const rows = await execAll(
+      `SELECT medidor_serie, periodo, timestamp_ts, consumo_m3, es_excesivo
+       FROM ${KS}.lecturas`
+    );
+    return rows.filter((r) => r.periodo === periodo);
+  });
+}
+
+async function loadInmueblesLite() {
+  return cachedRows('inmuebles:lite', () =>
+    execAll(
+      `SELECT contrato, nombre, categoria, medidor_serie, distrito_id, zona, ci, direccion
+       FROM ${KS}.inmuebles`
+    )
+  );
+}
+
+async function loadMedidoresLite() {
+  return cachedRows('medidores:lite', () =>
+    execAll(
+      `SELECT serie, modelo, estado, zona, distrito_id, instalacion, codigo_error
+       FROM ${KS}.medidores`
+    )
+  );
+}
+
 // Wraps handler con manejo de errores
 function h(fn) {
   return async (req, res) => {
@@ -46,23 +86,82 @@ async function loadDistritos() {
 
 // Mapeo subcategoria corta → nombre completo del tarifario
 const CAT_FULL = {
-  R1:'R1-Preferencial', R2:'R2-Social',     R3:'R3-Residencial',
-  R4:'R4-Residencial Alta', C:'Comercial',  CE:'CE-Comercial Especial',
-  I:'Industrial',       P:'P-Provisional',  S:'S-Social',
+  R1:'R1-Residencial', R2:'R2-Residencial', R3:'R3-Residencial',
+  R4:'R4-Residencial Alta', C:'C-Comercial', CE:'CE-Comercial Especial',
+  I:'I-Industrial', P:'P-Preferencial', S:'S-Social',
 };
+
+function normalizeText(value) {
+  return String(value || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .trim()
+    .replace(/\s+/g, ' ')
+    .toUpperCase();
+}
+
+function categoriaAlias(cat) {
+  const m = String(cat || '').trim().match(/^(R[1-4]|CE|C|I|P|S)\b/i);
+  return m ? m[1].toUpperCase() : String(cat || '').trim();
+}
+
+function tariffKey(cat) {
+  const raw = String(cat || '').trim();
+  if (TARIFARIO[raw]) return raw;
+  const alias = categoriaAlias(raw);
+  return CAT_FULL[alias] || raw;
+}
 
 // Calcula monto por m³ usando el tarifario
 function montoDesdeM3(cat, m3) {
-  const t = TARIFARIO[CAT_FULL[cat] || cat];
+  const t = TARIFARIO[tariffKey(cat)];
   if (!t) return 0;
-  const exc = Math.max(0, m3 - 12);
+  const consumo = Number(m3) || 0;
   let monto = t.cargo_fijo;
-  if (exc > 0) {
-    monto += Math.min(exc, t.t1_lim) * t.t1_p;
-    if (exc > t.t1_lim) monto += Math.min(exc - t.t1_lim, t.t2_lim - t.t1_lim) * t.t2_p;
-    if (exc > t.t2_lim) monto += (exc - t.t2_lim) * t.t3_p;
+  let desde = 12;
+
+  for (const tramo of t.tramos || []) {
+    if (consumo <= desde) break;
+    const hasta = tramo.hasta === Infinity ? consumo : tramo.hasta;
+    const consumoTramo = Math.max(0, Math.min(consumo, hasta) - desde);
+    monto += consumoTramo * tramo.precio;
+    desde = tramo.hasta === Infinity ? consumo : tramo.hasta;
   }
   return +monto.toFixed(2);
+}
+
+function inferDistritoIdFromZona(zona) {
+  const z = normalizeText(zona);
+  if (!z) return 0;
+
+  if (/(TAMBORADA|PUKARA GRANDE|MAICA)/.test(z)) return 9;
+  if (/(KHARA KHARA|KARA KARA|CARA CARA|ARRUMANI)/.test(z)) return 15;
+  if (/(QUERU QUERU|ARANJUEZ|TUNARI)/.test(z)) return 1;
+  if (/(CALA CALA|MAYORAZGO)/.test(z)) return 2;
+  if (/(SARCO|SARCOBAMBA)/.test(z)) return 3;
+  if (/(CONA CONA|HIPODROMO|COÑA COÑA)/.test(z)) return 4;
+  if (/(JAIHUAYCO|LACMA)/.test(z)) return 5;
+  if (/(ALALAY NORTE)/.test(z)) return 6;
+  if (/(ALALAY SUD|ALALAY SUR)/.test(z)) return 7;
+  if (/(TICTI|USPHA USPHA)/.test(z)) return 8;
+  if (/(NOROESTE|NORESTE|CENTRO)/.test(z)) return 10;
+  if (/(MUYURINA|CUADRAS)/.test(z)) return 11;
+  if (/(TUPURAYA|INDUSTRIAL)/.test(z)) return 12;
+  if (/(VALLE HERMOSO)/.test(z)) return 14;
+  return 0;
+}
+
+function distritoIdFromMeta(meta = {}) {
+  return meta.distrito_id || meta.distrito || inferDistritoIdFromZona(meta.zona);
+}
+
+function distritoNombre(dmap, id) {
+  return id ? (dmap[id] || `D-${id}`) : 'D-0';
+}
+
+function isFailureStatus(value) {
+  const s = normalizeText(value);
+  return s.includes('MANTEN') || (s.includes('DA') && !s.includes('REACOND'));
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -179,27 +278,27 @@ router.get('/3', h(async (req, res) => {
   const limite = parseInt(req.query.limite || '50');
 
   // Lecturas excesivas del periodo activo
-  const lects = await exec(
-    `SELECT medidor_serie, consumo_m3 FROM ${KS}.lecturas
-     WHERE periodo=? AND es_excesivo=true ALLOW FILTERING`,
-    [PERIODO]
-  );
+  const [lects, inmRows] = await Promise.all([
+    loadLecturasPeriodo(PERIODO),
+    loadInmueblesLite(),
+  ]);
+  const inmByMedidor = {};
+  inmRows.forEach((r) => { if (r.medidor_serie) inmByMedidor[r.medidor_serie] = r; });
 
   // Buscar el contrato de cada medidor (inmuebles por medidor_serie usa índice)
   const resultado = [];
   const vistas = new Set();
-  for (const l of lects) {
+  const excesivas = lects
+    .filter((l) => l.es_excesivo || Number(l.consumo_m3 || 0) > 45)
+    .sort((a, b) => Number(b.consumo_m3 || 0) - Number(a.consumo_m3 || 0));
+
+  for (const l of excesivas) {
     if (vistas.has(l.medidor_serie) || resultado.length >= limite) continue;
     vistas.add(l.medidor_serie);
 
-    const inmRows = await exec(
-      `SELECT contrato, categoria, medidor_serie FROM ${KS}.inmuebles
-       WHERE medidor_serie=? ALLOW FILTERING`,
-      [l.medidor_serie]
-    );
-    const inm = inmRows[0];
+    const inm = inmByMedidor[l.medidor_serie];
     if (!inm) continue;
-    const cat = inm.categoria || '';
+    const cat = categoriaAlias(inm.categoria);
     if (!['R1','R2','R3','R4'].includes(cat)) continue; // solo residencial
 
     const exceso_pct = +(((l.consumo_m3 - 45) / 45) * 100).toFixed(2);
@@ -220,15 +319,14 @@ router.get('/3', h(async (req, res) => {
 // GET /api/consultas/4
 // ─────────────────────────────────────────────────────────────────────────────
 router.get('/4', h(async (req, res) => {
-  const medRows = await execAll(
-    `SELECT serie, estado, zona, distrito_id FROM ${KS}.medidores
-     WHERE estado='Operativo' ALLOW FILTERING`
-  );
+  const medRows = (await loadMedidoresLite())
+    .filter((m) => normalizeText(m.estado) === 'OPERATIVO');
   const dmap = await loadDistritos();
 
   const agr = {}; // 'distrito_id|zona' → count
   for (const m of medRows) {
-    const key = `${m.distrito_id || 0}|${m.zona || 'SIN ZONA'}`;
+    const did = distritoIdFromMeta(m);
+    const key = `${did || 0}|${m.zona || 'SIN ZONA'}`;
     agr[key] = (agr[key] || 0) + 1;
   }
 
@@ -247,15 +345,14 @@ router.get('/4', h(async (req, res) => {
 // GET /api/consultas/5
 // ─────────────────────────────────────────────────────────────────────────────
 router.get('/5', h(async (req, res) => {
-  const medRows = await execAll(
-    `SELECT serie, estado, zona, distrito_id FROM ${KS}.medidores
-     WHERE estado IN ('Dañado','Mantenimiento','Inactivo') ALLOW FILTERING`
-  );
+  const medRows = (await loadMedidoresLite())
+    .filter((m) => isFailureStatus(m.estado) || normalizeText(m.estado).includes('INACTIVO'));
   const dmap = await loadDistritos();
 
   const agr = {};
   for (const m of medRows) {
-    const key = `${m.distrito_id || 0}|${m.zona || 'SIN ZONA'}`;
+    const did = distritoIdFromMeta(m);
+    const key = `${did || 0}|${m.zona || 'SIN ZONA'}`;
     if (!agr[key]) agr[key] = { count: 0, estados: {} };
     agr[key].count++;
     agr[key].estados[m.estado] = (agr[key].estados[m.estado] || 0) + 1;
@@ -276,14 +373,14 @@ router.get('/5', h(async (req, res) => {
 // GET /api/consultas/6
 // ─────────────────────────────────────────────────────────────────────────────
 router.get('/6', h(async (req, res) => {
-  const medRows = await execAll(`SELECT serie, modelo, estado FROM ${KS}.medidores`);
+  const medRows = await loadMedidoresLite();
 
   const stats = {}; // modelo → { total, fallos }
   for (const m of medRows) {
     const mod = m.modelo || 'Desconocido';
     if (!stats[mod]) stats[mod] = { total: 0, fallos: 0 };
     stats[mod].total++;
-    if (['Dañado', 'Mantenimiento'].includes(m.estado)) stats[mod].fallos++;
+    if (isFailureStatus(m.estado)) stats[mod].fallos++;
   }
 
   const data = Object.entries(stats).map(([modelo, s]) => ({
@@ -302,25 +399,23 @@ router.get('/6', h(async (req, res) => {
 // ─────────────────────────────────────────────────────────────────────────────
 router.get('/7', h(async (req, res) => {
   const periodo = req.query.periodo || PERIODO;
+  const distritoId = req.query.distrito_id ? parseInt(req.query.distrito_id, 10) : null;
   const dmap    = await loadDistritos();
 
   // Trae todos los inmuebles con zona y distrito
-  const inmRows = await exec(`SELECT contrato, categoria, medidor_serie, distrito_id FROM ${KS}.inmuebles`);
+  const inmRows = await loadInmueblesLite();
   const medToInm = {}; // medidor_serie → { categoria, distrito_id }
-  inmRows.forEach(r => { medToInm[r.medidor_serie] = { cat: r.categoria, did: r.distrito_id }; });
+  inmRows.forEach(r => { medToInm[r.medidor_serie] = { cat: r.categoria, distrito_id: r.distrito_id, zona: r.zona }; });
 
   // Agrupa consumo por distrito + categoria
   const agr = {}; // `did|cat` → { suma, n }
-  // Muestra de 2000 lecturas del periodo
-  const lects = await exec(
-    `SELECT medidor_serie, consumo_m3 FROM ${KS}.lecturas
-     WHERE periodo=? LIMIT 2000 ALLOW FILTERING`,
-    [periodo]
-  );
+  const lects = await loadLecturasPeriodo(periodo);
   for (const l of lects) {
     const meta = medToInm[l.medidor_serie];
     if (!meta) continue;
-    const key = `${meta.did || 0}|${meta.cat || '?'}`;
+    const did = distritoIdFromMeta(meta);
+    if (distritoId && did !== distritoId) continue;
+    const key = `${did || 0}|${categoriaAlias(meta.cat) || '?'}`;
     if (!agr[key]) agr[key] = { suma: 0, n: 0 };
     agr[key].suma += l.consumo_m3 || 0;
     agr[key].n++;
@@ -330,13 +425,71 @@ router.get('/7', h(async (req, res) => {
   const pivot = {};
   for (const [key, v] of Object.entries(agr)) {
     const [did, cat] = key.split('|');
-    const dnom = dmap[parseInt(did)] || `D-${did}`;
-    if (!pivot[dnom]) pivot[dnom] = {};
+    const distritoNum = parseInt(did);
+    const dnom = distritoNombre(dmap, distritoNum);
+    if (!pivot[dnom]) pivot[dnom] = { distrito_id: distritoNum, total_consumo_m3: 0 };
     pivot[dnom][cat] = Math.round(v.suma);
+    pivot[dnom].total_consumo_m3 += v.suma;
   }
 
-  const data = Object.entries(pivot).map(([distrito, cats]) => ({ distrito, ...cats }));
-  res.json({ consulta: 7, descripcion: 'Consumo promedio mensual por tarifa y distrito', periodo, data });
+  const data = Object.entries(pivot).map(([distrito, cats]) => ({
+    distrito,
+    ...cats,
+    total_consumo_m3: +cats.total_consumo_m3.toFixed(2),
+  }));
+  const total_consumo_m3 = +data.reduce((s, r) => s + (r.total_consumo_m3 || 0), 0).toFixed(2);
+  res.json({ consulta: 7, descripcion: 'Consumo mensual por tarifa y distrito', periodo, distrito_id: distritoId, total_consumo_m3, data });
+}));
+
+// Heatmap SVG: consumo real agregado por zona para pintar paths por data-name.
+// GET /api/consultas/heatmap-zonas?periodo=2026-02
+router.get('/heatmap-zonas', h(async (req, res) => {
+  const periodo = req.query.periodo || PERIODO;
+  const [lects, inmRows] = await Promise.all([
+    loadLecturasPeriodo(periodo),
+    loadInmueblesLite(),
+  ]);
+
+  const medToMeta = {};
+  inmRows.forEach((r) => {
+    if (r.medidor_serie) {
+      medToMeta[r.medidor_serie] = {
+        zona: r.zona || 'SIN ZONA',
+        distrito_id: distritoIdFromMeta(r),
+      };
+    }
+  });
+
+  const agr = {};
+  for (const l of lects) {
+    const meta = medToMeta[l.medidor_serie];
+    if (!meta || !meta.zona || meta.zona === 'SIN ZONA') continue;
+    const key = normalizeText(meta.zona);
+    if (!agr[key]) {
+      agr[key] = {
+        zona: meta.zona,
+        zona_key: key,
+        distrito_id: meta.distrito_id || null,
+        consumo: 0,
+        medidores: new Set(),
+      };
+    }
+    agr[key].consumo += l.consumo_m3 || 0;
+    agr[key].medidores.add(l.medidor_serie);
+  }
+
+  const data = Object.values(agr)
+    .map((row) => ({
+      zona: row.zona,
+      zona_key: row.zona_key,
+      distrito_id: row.distrito_id,
+      consumo: +row.consumo.toFixed(2),
+      medidores: row.medidores.size,
+    }))
+    .sort((a, b) => b.consumo - a.consumo);
+
+  const total_consumo_m3 = +data.reduce((s, r) => s + r.consumo, 0).toFixed(2);
+  res.json({ consulta: 'heatmap-zonas', periodo, total_consumo_m3, total_zonas: data.length, data });
 }));
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -345,32 +498,29 @@ router.get('/7', h(async (req, res) => {
 // ─────────────────────────────────────────────────────────────────────────────
 router.get('/8', h(async (req, res) => {
   // Lecturas anómalas: consumo_m3 = 0 O es_excesivo = true
-  const excLects = await exec(
-    `SELECT medidor_serie FROM ${KS}.lecturas WHERE periodo=? AND es_excesivo=true ALLOW FILTERING`,
-    [PERIODO]
-  );
-  const ceroLects = await exec(
-    `SELECT medidor_serie FROM ${KS}.lecturas WHERE periodo=? AND consumo_m3=0 ALLOW FILTERING`,
-    [PERIODO]
-  );
+  const [lects, medRows] = await Promise.all([
+    loadLecturasPeriodo(PERIODO),
+    loadMedidoresLite(),
+  ]);
+  const medBySerie = {};
+  medRows.forEach((m) => { if (m.serie) medBySerie[m.serie] = m; });
 
   // Unir medidores anómalos
-  const anomalos = new Set([
-    ...excLects.map(r => r.medidor_serie),
-    ...ceroLects.map(r => r.medidor_serie),
-  ]);
+  const anomalos = new Set(
+    lects
+      .filter((l) => l.es_excesivo || Number(l.consumo_m3 || 0) === 0 || Number(l.consumo_m3 || 0) > 45)
+      .map((l) => l.medidor_serie)
+  );
 
   // Buscar zona y modelo de cada medidor anómalo
   const agr = {}; // zona → { count, modelos: Set }
   for (const serie of anomalos) {
-    const rows = await exec(
-      `SELECT modelo, zona FROM ${KS}.medidores WHERE serie=?`, [serie]
-    );
-    if (!rows[0]) continue;
-    const zona = rows[0].zona || 'SIN ZONA';
+    const med = medBySerie[serie];
+    if (!med) continue;
+    const zona = med.zona || 'SIN ZONA';
     if (!agr[zona]) agr[zona] = { count: 0, modelos: new Set() };
     agr[zona].count++;
-    if (rows[0].modelo) agr[zona].modelos.add(rows[0].modelo);
+    if (med.modelo) agr[zona].modelos.add(med.modelo);
   }
 
   const data = Object.entries(agr)
@@ -411,7 +561,7 @@ router.get('/9', h(async (req, res) => {
 // GET /api/consultas/10
 // ─────────────────────────────────────────────────────────────────────────────
 router.get('/10', h(async (req, res) => {
-  const medRows = await exec(`SELECT serie, instalacion FROM ${KS}.medidores`);
+  const medRows = await loadMedidoresLite();
   const limite  = new Date();
   limite.setFullYear(limite.getFullYear() - 4);
 
@@ -422,12 +572,22 @@ router.get('/10', h(async (req, res) => {
     if (inst < limite) antiguos++;
   }
 
+  const top100 = medRows
+    .filter((m) => m.instalacion)
+    .sort((a, b) => new Date(a.instalacion.toString()) - new Date(b.instalacion.toString()))
+    .slice(0, 100)
+    .map((m) => ({
+      serie: m.serie,
+      instalacion: m.instalacion ? m.instalacion.toString() : null,
+    }));
+
   res.json({
     consulta: 10,
     descripcion: 'Medidores con más de 4 años de antigüedad (fuera de garantía)',
     total_medidores:  medRows.length,
     medidores_4_anos: antiguos,
     porcentaje: +((antiguos / medRows.length) * 100).toFixed(2) + '%',
+    top100,
   });
 }));
 
@@ -522,14 +682,12 @@ router.get('/12', h(async (req, res) => {
 // ─────────────────────────────────────────────────────────────────────────────
 router.get('/13', h(async (req, res) => {
   const dmap = await loadDistritos();
-  const medRows = await exec(
-    `SELECT serie, modelo, zona, distrito_id, estado FROM ${KS}.medidores
-     WHERE estado IN ('Dañado','Mantenimiento') ALLOW FILTERING`
-  );
+  const medRows = (await loadMedidoresLite()).filter((m) => isFailureStatus(m.estado));
 
   const agr = {}; // `did|zona` → { count, modelos: {} }
   for (const m of medRows) {
-    const key = `${m.distrito_id || 0}|${m.zona || 'SIN ZONA'}`;
+    const did = distritoIdFromMeta(m);
+    const key = `${did || 0}|${m.zona || 'SIN ZONA'}`;
     if (!agr[key]) agr[key] = { count: 0, modelos: {} };
     agr[key].count++;
     agr[key].modelos[m.modelo || '?'] = (agr[key].modelos[m.modelo || '?'] || 0) + 1;
@@ -538,7 +696,7 @@ router.get('/13', h(async (req, res) => {
   const data = Object.entries(agr).map(([key, v]) => {
     const [did, zona] = key.split('|');
     return {
-      distrito: dmap[parseInt(did)] || `D-${did}`,
+      distrito: distritoNombre(dmap, parseInt(did)),
       zona,
       medidores_con_falla: v.count,
       recomendacion: v.count > 50 ? 'RENOVACIÓN URGENTE' : 'MANTENIMIENTO PREVENTIVO',
@@ -621,15 +779,16 @@ router.get('/17', h(async (req, res) => {
 // ─────────────────────────────────────────────────────────────────────────────
 router.get('/18', h(async (req, res) => {
   const dmap = await loadDistritos();
-  const lects = await exec(
-    `SELECT medidor_serie, consumo_m3 FROM ${KS}.lecturas WHERE periodo=? LIMIT 10000 ALLOW FILTERING`,
-    [PERIODO]
-  );
+  const [lects, inmRows, medRows] = await Promise.all([
+    loadLecturasPeriodo(PERIODO),
+    loadInmueblesLite(),
+    loadMedidoresLite(),
+  ]);
 
   // Suma consumo actual por medidor
-  const medRows = await exec(`SELECT serie, distrito_id FROM ${KS}.medidores`);
   const medToDist = {};
-  medRows.forEach(m => { medToDist[m.serie] = m.distrito_id; });
+  medRows.forEach(m => { medToDist[m.serie] = distritoIdFromMeta(m); });
+  inmRows.forEach(m => { if (m.medidor_serie) medToDist[m.medidor_serie] = distritoIdFromMeta(m) || medToDist[m.medidor_serie] || 0; });
 
   const baseDistrito = {};
   for (const l of lects) {
@@ -639,7 +798,7 @@ router.get('/18', h(async (req, res) => {
 
   const GROWTH = 0.026;
   const data   = Object.entries(baseDistrito).map(([did, base]) => {
-    const row = { distrito: dmap[parseInt(did)] || `D-${did}` };
+    const row = { distrito: distritoNombre(dmap, parseInt(did)) };
     let val = base;
     for (let y = 2025; y <= 2029; y++) {
       row[`${y}_m3`] = Math.round(val);
@@ -746,18 +905,15 @@ router.get('/21', h(async (req, res) => {
 // GET /api/consultas/22
 // ─────────────────────────────────────────────────────────────────────────────
 router.get('/22', h(async (req, res) => {
-  const inmRows = await exec(`SELECT medidor_serie, categoria FROM ${KS}.inmuebles`);
+  const inmRows = await loadInmueblesLite();
   const medToCat = {};
   inmRows.forEach(r => { medToCat[r.medidor_serie] = r.categoria; });
 
-  const lects = await exec(
-    `SELECT medidor_serie, consumo_m3 FROM ${KS}.lecturas WHERE periodo=? LIMIT 20000 ALLOW FILTERING`,
-    [PERIODO]
-  );
+  const lects = await loadLecturasPeriodo(PERIODO);
 
   const agr = {}; // cat → { totalM3, totalBs, n }
   for (const l of lects) {
-    const cat = medToCat[l.medidor_serie] || '?';
+    const cat = categoriaAlias(medToCat[l.medidor_serie]) || '?';
     if (!agr[cat]) agr[cat] = { totalM3: 0, totalBs: 0, n: 0 };
     agr[cat].totalM3 += l.consumo_m3 || 0;
     agr[cat].totalBs += montoDesdeM3(cat, l.consumo_m3 || 0);
@@ -788,11 +944,12 @@ router.get('/23', h(async (req, res) => {
   const MINIMO_M3 = 12; // consumo mínimo facturable
 
   // Lecturas del periodo con consumo < mínimo (aún así se cobra el cargo fijo)
-  const lects = await exec(
-    `SELECT medidor_serie, consumo_m3 FROM ${KS}.lecturas
-     WHERE periodo=? LIMIT 5000 ALLOW FILTERING`,
-    [PERIODO]
-  );
+  const [lects, inmRows] = await Promise.all([
+    loadLecturasPeriodo(PERIODO),
+    loadInmueblesLite(),
+  ]);
+  const inmByMedidor = {};
+  inmRows.forEach((r) => { if (r.medidor_serie) inmByMedidor[r.medidor_serie] = r; });
 
   const consumoMed = {};
   for (const l of lects) {
@@ -802,17 +959,14 @@ router.get('/23', h(async (req, res) => {
   const data = [];
   for (const [serie, m3] of Object.entries(consumoMed)) {
     if (m3 >= MINIMO_M3) continue;
-    const inmRows = await exec(
-      `SELECT contrato, nombre, categoria FROM ${KS}.inmuebles WHERE medidor_serie=? ALLOW FILTERING`,
-      [serie]
-    );
-    if (!inmRows[0]) continue;
-    const cat = inmRows[0].categoria || 'R2';
+    const inm = inmByMedidor[serie];
+    if (!inm) continue;
+    const cat = categoriaAlias(inm.categoria || 'R2');
     if (!['R1','R2','R3','R4'].includes(cat)) continue;
     const montoCobrar = montoDesdeM3(cat, MINIMO_M3); // se cobra como si consumiera 12m³
     data.push({
-      contrato:      inmRows[0].contrato,
-      nombre:        inmRows[0].nombre,
+      contrato:      inm.contrato,
+      nombre:        inm.nombre,
       categoria:     cat,
       consumo_real_m3: m3,
       consumo_min_m3:  MINIMO_M3,
@@ -836,18 +990,15 @@ router.get('/23', h(async (req, res) => {
 // ─────────────────────────────────────────────────────────────────────────────
 router.get('/24', h(async (req, res) => {
   // Reutiliza los datos de consulta 22 y convierte m³ → pies³
-  const inmRows = await exec(`SELECT medidor_serie, categoria FROM ${KS}.inmuebles`);
+  const inmRows = await loadInmueblesLite();
   const medToCat = {};
   inmRows.forEach(r => { medToCat[r.medidor_serie] = r.categoria; });
 
-  const lects = await exec(
-    `SELECT medidor_serie, consumo_m3 FROM ${KS}.lecturas WHERE periodo=? LIMIT 20000 ALLOW FILTERING`,
-    [PERIODO]
-  );
+  const lects = await loadLecturasPeriodo(PERIODO);
 
   const agr = {};
   for (const l of lects) {
-    const cat = medToCat[l.medidor_serie] || '?';
+    const cat = categoriaAlias(medToCat[l.medidor_serie]) || '?';
     if (!agr[cat]) agr[cat] = { totalM3: 0, totalBs: 0 };
     agr[cat].totalM3 += l.consumo_m3 || 0;
     agr[cat].totalBs += montoDesdeM3(cat, l.consumo_m3 || 0);

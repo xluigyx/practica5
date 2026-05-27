@@ -19,21 +19,29 @@ function toStatus(s: string | null): StatusDistrito {
   return s && VALID_STATUS.includes(s as StatusDistrito) ? (s as StatusDistrito) : 'normal';
 }
 
+function round2(value: number | null | undefined): number {
+  return Number(Number(value ?? 0).toFixed(2));
+}
+
+function fmt2(value: number): string {
+  return Number(value ?? 0).toLocaleString('es-BO', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
 function rawToDistrito(raw: DistritoRaw): DistritoMetrics {
   const total   = raw.medidores_total ?? 0;
-  const cobert  = raw.cobertura_pct   ?? 0;
+  const cobert  = round2(raw.cobertura_pct);
   return {
     id:               raw.id,
     name:             raw.nombre,
     subalcaldia:      raw.subalcaldia,
-    consumoM3:        raw.consumo_m3   ?? 0,
-    presionPSI:       raw.presion_psi  ?? 0,
+    consumoM3:        round2(raw.consumo_m3),
+    presionPSI:       round2(raw.presion_psi),
     poblacion:        raw.poblacion    ?? 0,
     medidoresTotal:   total,
     medidoresActivos: Math.round(total * cobert / 100),
     cobertura:        cobert,
     calidadICA:       raw.calidad_ica  ?? 0,
-    temperatura:      raw.temperatura_c ?? 0,
+    temperatura:      round2(raw.temperatura_c),
     status:           toStatus(raw.status),
   };
 }
@@ -174,12 +182,12 @@ function DistrictDetailPanel({
 
         <div className="grid grid-cols-2 gap-2">
           {[
-            { l:'Consumo',     v:`${district.consumoM3} m³/s`,              c: district.consumoM3 > 450 ? '#ef4444' : '#60a5fa' },
-            { l:'Presión',     v:`${district.presionPSI} PSI`,               c:'#22d3ee' },
+            { l:'Consumo',     v:`${fmt2(district.consumoM3)} m³/s`,         c: district.consumoM3 > 450 ? '#ef4444' : '#60a5fa' },
+            { l:'Presión',     v:`${fmt2(district.presionPSI)} PSI`,          c:'#22d3ee' },
             { l:'Población',   v: district.poblacion.toLocaleString('es-BO'),c:'#34d399' },
-            { l:'Cobertura',   v:`${district.cobertura}%`,                   c:'#a78bfa' },
+            { l:'Cobertura',   v:`${fmt2(district.cobertura)}%`,              c:'#a78bfa' },
             { l:'Calidad ICA', v:`${district.calidadICA}/100`,               c: district.calidadICA >= 80 ? '#34d399' : district.calidadICA >= 70 ? '#f59e0b' : '#ef4444' },
-            { l:'Temperatura', v:`${district.temperatura}°C`,                c:'#f87171' },
+            { l:'Temperatura', v:`${fmt2(district.temperatura)}°C`,           c:'#f87171' },
           ].map(({ l, v, c }) => (
             <div
               key={l}
@@ -365,7 +373,7 @@ export default function MapaCochabambaV2Section() {
                       }}
                     />
                   </div>
-                  <span className="text-xs font-bold font-mono text-on-surface w-16 text-right">{d.consumoM3} m³/s</span>
+                  <span className="text-xs font-bold font-mono text-on-surface w-16 text-right">{fmt2(d.consumoM3)} m³/s</span>
                 </div>
               ))}
             </div>

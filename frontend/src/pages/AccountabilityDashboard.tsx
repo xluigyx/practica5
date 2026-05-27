@@ -9,6 +9,14 @@ import type { CierreRaw, MorosoRaw, Consulta22Row, Consulta23Row } from '@/src/l
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:4000';
 
+function formatBs(value: number): string {
+  return Number(value ?? 0).toLocaleString('es-BO', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
+function formatM3(value: number): string {
+  return Number(value ?? 0).toLocaleString('es-BO', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
 const MESES_ES = ['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'];
 function formatPeriodo(raw: string): string {
   const [y, m] = raw.split('-');
@@ -37,7 +45,7 @@ const DarkTip = ({active,payload,label}: any) => {
       <p className="font-bold text-on-surface-variant mb-2 text-[10px] uppercase tracking-wide">{label}</p>
       {payload.map((p:any,i:number)=>(
         <p key={i} style={{color:p.color}} className="font-semibold mt-0.5">
-          {p.name}: <span className="text-on-surface">Bs {p.value?.toLocaleString?.()}</span>
+          {p.name}: <span className="text-on-surface">Bs {formatBs(Number(p.value ?? 0))}</span>
         </p>
       ))}
     </div>
@@ -105,7 +113,7 @@ function SimuladorTarifario() {
       <div className="rounded-2xl overflow-hidden border border-outline-variant">
         <div className="px-4 py-3 text-[10px] font-bold uppercase tracking-wider text-on-surface-variant"
              style={{background:'linear-gradient(180deg,rgba(237,241,255,0.6) 0%,rgba(255,255,255,0) 100%)'}}>
-          Desglose Tramos · {catNueva} · Cargo fijo: Bs {TARIFARIO[catNueva].cargo_fijo} (12m³ base)
+          Desglose Tramos · {catNueva} · Cargo fijo: Bs {formatBs(TARIFARIO[catNueva].cargo_fijo)} (12m³ base)
         </div>
         <table className="w-full text-xs data-table">
           <thead>
@@ -116,7 +124,7 @@ function SimuladorTarifario() {
               <tr key={t.tramo}>
                 <td className="px-4 py-2.5 font-bold text-primary">Tramo {t.tramo}</td>
                 <td className="px-4 py-2.5 font-mono text-on-surface">{t.m3}</td>
-                <td className="px-4 py-2.5 text-on-surface-variant">Bs {t.precio}</td>
+                <td className="px-4 py-2.5 text-on-surface-variant">Bs {formatBs(t.precio)}</td>
                 <td className="px-4 py-2.5 font-bold text-secondary font-mono">Bs {t.subtotal.toFixed(2)}</td>
               </tr>
             ))}
@@ -186,7 +194,7 @@ function ConsultasFinancieroTab() {
             <p className="text-[10px] font-bold uppercase tracking-widest text-on-surface-variant mb-0.5">Consulta 22</p>
             <h4 className="text-sm font-bold text-on-surface">Proyección de Ingresos por Categoría</h4>
             <p className="text-xs text-on-surface-variant mt-0.5">
-              Período activo · Total: <span className="font-bold text-secondary">Bs {q22total.toLocaleString(undefined,{maximumFractionDigits:0})}</span>
+              Período activo · Total: <span className="font-bold text-secondary">Bs {formatBs(q22total)}</span>
             </p>
           </div>
           {q22.length === 0 ? (
@@ -215,8 +223,8 @@ function ConsultasFinancieroTab() {
                     {q22.map((r,i)=>(
                       <tr key={i}>
                         <td className="px-3 py-2 font-bold" style={{color:PIE_COLORS[i%PIE_COLORS.length]}}>{r.categoria}</td>
-                        <td className="px-3 py-2 font-mono text-on-surface-variant">{r.consumo_m3.toLocaleString()}</td>
-                        <td className="px-3 py-2 font-mono font-bold text-secondary">Bs {r.ingresos_bs.toLocaleString(undefined,{maximumFractionDigits:0})}</td>
+                        <td className="px-3 py-2 font-mono text-on-surface-variant">{formatM3(r.consumo_m3)}</td>
+                        <td className="px-3 py-2 font-mono font-bold text-secondary">Bs {formatBs(r.ingresos_bs)}</td>
                       </tr>
                     ))}
                   </tbody>
@@ -256,7 +264,7 @@ function ConsultasFinancieroTab() {
                       <td className="px-4 py-2.5 font-mono font-bold text-primary">{r.contrato}</td>
                       <td className="px-4 py-2.5 text-on-surface max-w-[120px] truncate">{r.nombre}</td>
                       <td className="px-4 py-2.5"><span className="text-[9px] font-bold bg-surface-container-high text-on-surface px-1.5 py-0.5 rounded-full">{r.categoria}</span></td>
-                      <td className="px-4 py-2.5 font-mono text-amber-500 text-right font-bold">{r.consumo_real_m3}</td>
+                      <td className="px-4 py-2.5 font-mono text-amber-500 text-right font-bold">{formatM3(r.consumo_real_m3)}</td>
                       <td className="px-4 py-2.5 font-mono font-bold text-secondary text-right">Bs {r.monto_bs.toFixed(2)}</td>
                     </tr>
                   ))}
@@ -462,10 +470,10 @@ export default function AccountabilityDashboard() {
                     {cierreData.map(m=>(
                       <tr key={m.periodo}>
                         <td className="px-5 py-3 font-bold text-on-surface">{m.periodo}</td>
-                        <td className="px-5 py-3 font-mono font-bold text-primary">{m.facturado.toLocaleString()}</td>
-                        <td className="px-5 py-3 font-mono font-bold text-secondary">{m.cobrado.toLocaleString()}</td>
-                        <td className="px-5 py-3 font-mono text-amber-500 font-semibold">{m.pendiente.toLocaleString()}</td>
-                        <td className="px-5 py-3 font-mono text-error font-semibold">{m.incobrables.toLocaleString()}</td>
+                        <td className="px-5 py-3 font-mono font-bold text-primary">{formatBs(m.facturado)}</td>
+                        <td className="px-5 py-3 font-mono font-bold text-secondary">{formatBs(m.cobrado)}</td>
+                        <td className="px-5 py-3 font-mono text-amber-500 font-semibold">{formatBs(m.pendiente)}</td>
+                        <td className="px-5 py-3 font-mono text-error font-semibold">{formatBs(m.incobrables)}</td>
                         <td className="px-5 py-3">
                           <div className="flex items-center gap-2">
                             <div className="w-16 bg-surface-container h-1.5 rounded-full overflow-hidden">
@@ -509,13 +517,13 @@ export default function AccountabilityDashboard() {
                   <div className="absolute top-0 left-0 right-0 h-[3px] rounded-t-2xl" style={{background:'linear-gradient(90deg,#f59e0b,#f59e0b50)'}}/>
                   <p className="text-[10px] font-bold uppercase tracking-widest text-on-surface-variant mb-1">Deuda Total</p>
                   <p className="text-2xl font-extrabold text-amber-500 font-mono">Bs {(totalMor/1e6).toFixed(2)}M</p>
-                  <p className="text-xs text-on-surface-variant mt-1">{totalMor.toLocaleString()} bolivianos</p>
+                  <p className="text-xs text-on-surface-variant mt-1">{formatBs(totalMor)} bolivianos</p>
                 </div>
                 <div className="stat-card rounded-2xl p-4">
                   <div className="absolute top-0 left-0 right-0 h-[3px] rounded-t-2xl" style={{background:'linear-gradient(90deg,#a78bfa,#a78bfa50)'}}/>
                   <p className="text-[10px] font-bold uppercase tracking-widest text-on-surface-variant mb-1">Deuda Promedio</p>
                   <p className="text-2xl font-extrabold text-purple-500 font-mono">
-                    Bs {morososData.length>0?(totalMor/morososData.length).toLocaleString(undefined,{maximumFractionDigits:0}):'0'}
+                    Bs {formatBs(morososData.length>0 ? totalMor / morososData.length : 0)}
                   </p>
                   <p className="text-xs text-on-surface-variant mt-1">por contrato moroso</p>
                 </div>
@@ -549,7 +557,7 @@ export default function AccountabilityDashboard() {
                           <td className="px-5 py-3">
                             <span className="text-[9px] font-bold bg-surface-container-high text-on-surface px-2 py-0.5 rounded-full">{m.categoria}</span>
                           </td>
-                          <td className="px-5 py-3 font-bold font-mono text-error">{m.deudaTotal.toLocaleString()}</td>
+                          <td className="px-5 py-3 font-bold font-mono text-error">{formatBs(m.deudaTotal)}</td>
                           <td className="px-5 py-3">
                             <span className={cn('text-[9px] font-bold px-2 py-0.5 rounded-full',
                               m.mesesDeuda>=9?'chip-red':m.mesesDeuda>=6?'chip-amber':'chip-teal')}>

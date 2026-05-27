@@ -6,6 +6,7 @@ const morgan   = require('morgan');
 const { connect } = require('./cassandra');
 const { initKafka, publicarLecturas } = require('./kafka');
 const routes   = require('./routes');
+const mobileRoutes = require('./routes/mobile');
 
 const app  = express();
 const PORT = process.env.PORT || 4000;
@@ -20,6 +21,7 @@ app.use(express.json({
 }));
 app.use(morgan('[:date[iso]] :method :url :status :response-time ms'));
 
+app.use('/api', mobileRoutes);
 app.use('/api', routes);
 
 // Endpoint extra: disparar simulación de lecturas IoT vía Kafka

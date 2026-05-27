@@ -8,13 +8,13 @@ const cassandra = require('cassandra-driver');
 const HOSTS = (process.env.CASSANDRA_HOSTS || 'localhost').split(',');
 const DC    = process.env.CASSANDRA_DC    || 'datacenter1';
 const KS    = process.env.CASSANDRA_KEYSPACE || 'semapa';
-const CSV_DIR = process.env.CSV_DIR || 'C:\\Users\\LUIS MARIO\\Downloads';
+const CSV_DIR = process.env.CSV_DIR || 'C:\\Users\\PC\\OneDrive\\Documentos\\Univalle\\Semestre 7\\recursosP5';
 
 const FILES = {
-  infra:     path.join(CSV_DIR, '03 Practica 5 Recursos infraestructuras_cochabamba (1).csv'),
-  medidores: path.join(CSV_DIR, '03 Practica 5 Recursos medidores_iot (1).csv'),
-  contratos: path.join(CSV_DIR, '03 Practica 5 Recursos contratos_agua (1).csv'),
-  lecturas:  path.join(CSV_DIR, '03 Practica 5 Recursos lecturas_iot (1).csv'),
+  infra:     path.join(CSV_DIR, '03 Practica 5 Recursos infraestructuras_cochabamba (2).csv'),
+  medidores: path.join(CSV_DIR, '03 Practica 5 Recursos medidores_iot (2).csv'),
+  contratos: path.join(CSV_DIR, '03 Practica 5 Recursos contratos_agua (2).csv'),
+  lecturas:  path.join(CSV_DIR, '03 Practica 5 Recursos lecturas_iot (2).csv'),
 };
 
 const TIPO_MEDIDOR = {

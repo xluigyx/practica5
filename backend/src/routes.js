@@ -22,6 +22,23 @@ const consultasRouter = require('./queries');
 
 const router = Router();
 
+function normalizeText(value) {
+  return String(value || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .trim()
+    .replace(/\s+/g, ' ')
+    .toUpperCase();
+}
+
+function codigoErrorFromEstado(estado) {
+  const s = normalizeText(estado);
+  if (s.includes('INACTIVO')) return 3;
+  if (s.includes('MANTEN')) return 4;
+  if (s.includes('DANADO')) return 5;
+  return null;
+}
+
 // ── Las 25 Consultas del PDF ──────────────────────────────────────────────────
 router.use('/consultas', consultasRouter);
 
@@ -110,7 +127,12 @@ router.get('/medidores/errores', async (req, res) => {
         (err) => err ? reject(err) : resolve(acc)
       );
     });
-    const filtrados = rows.filter(m => codigos.includes(m.codigo_error));
+    const filtrados = rows
+      .map((m) => ({
+        ...m,
+        codigo_error: m.codigo_error || codigoErrorFromEstado(m.estado),
+      }))
+      .filter(m => codigos.includes(m.codigo_error));
     res.json(filtrados);
   } catch (e) {
     res.status(500).json({ error: e.message });

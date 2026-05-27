@@ -1,377 +1,441 @@
-import { useState, useCallback, useEffect } from 'react';
-import { Thermometer, MapPin } from 'lucide-react';
+import { useEffect, useMemo, useState } from 'react';
+import { Database, MapPin, Thermometer } from 'lucide-react';
 import { cn } from '@/src/lib/utils';
-import { api } from '@/src/lib/api';
-import type { DistritoRaw } from '@/src/lib/api';
+import { COCHABAMBA_ZONE_PATHS, type ZonePath } from './cochabamba-zone-paths-v2';
 import {
   COMUNAS,
+  DISTRITO_BOUNDARIES,
   getComunaByDistritoId,
   getDistritoById,
 } from './semapa-territory-v2';
-import type { DistritoMetrics, StatusDistrito } from './semapa-map-types-v2';
-import CochabambaMapV2 from './CochabambaMapV2';
 
-const VALID_STATUS: StatusDistrito[] = ['normal', 'alta-demanda', 'critico', 'mantenimiento'];
-function toStatus(s: string | null): StatusDistrito {
-  return s && VALID_STATUS.includes(s as StatusDistrito) ? (s as StatusDistrito) : 'normal';
+/*
+  Original heatmap component:
+  - Full backup: MapaCalorSection.backup.tsx
+  - Previous render path used api.distritos() + <CochabambaMapV2 metric="consumo"
+    defaultViewMode="heatmap" lockViewMode />.
+  - To revert quickly, replace this file with the backup or restore that component.
+*/
+
+const API_BASE = String(((import.meta as any).env?.VITE_API_URL ?? 'http://localhost:4000')).replace(/\/$/, '');
+const PERIOD = '2026-02';
+const VIEWBOX_W = 918;
+const VIEWBOX_H = 1297;
+
+type ApiStatus = 'loading' | 'ready' | 'empty' | 'error';
+
+interface HeatmapZoneRow {
+  zona: string;
+  zona_key: string;
+  distrito_id: number | null;
+  consumo: number;
+  medidores: number;
 }
 
-function rawToDistrito(raw: DistritoRaw): DistritoMetrics {
-  const total  = raw.medidores_total ?? 0;
-  const cobert = raw.cobertura_pct   ?? 0;
-  return {
-    id:               raw.id,
-    name:             raw.nombre,
-    subalcaldia:      raw.subalcaldia,
-    consumoM3:        raw.consumo_m3    ?? 0,
-    presionPSI:       raw.presion_psi   ?? 0,
-    poblacion:        raw.poblacion     ?? 0,
-    medidoresTotal:   total,
-    medidoresActivos: Math.round(total * cobert / 100),
-    cobertura:        cobert,
-    calidadICA:       raw.calidad_ica   ?? 0,
-    temperatura:      raw.temperatura_c ?? 0,
-    status:           toStatus(raw.status),
-  };
+interface HeatmapResponse {
+  periodo: string;
+  total_consumo_m3: number;
+  total_zonas: number;
+  data: HeatmapZoneRow[];
 }
 
-const STATUS_CFG: Record<StatusDistrito, { color: string; bg: string; label: string }> = {
-  'normal':        { color:'#059669', bg:'rgba(5,150,105,0.10)',  label:'Normal' },
-  'alta-demanda':  { color:'#d97706', bg:'rgba(217,119,6,0.10)',  label:'Alta Demanda' },
-  'critico':       { color:'#dc2626', bg:'rgba(220,38,38,0.10)',  label:'Crítico' },
-  'mantenimiento': { color:'#7c3aed', bg:'rgba(124,58,237,0.10)', label:'Mantenimiento' },
-};
-
-// Gradient legend — paleta pastel menta → amarillo → ámbar → coral
-const LEGEND_STOPS = [
-  { label: 'Bajo',   color: '#bbf7d0' },
-  { label: 'Medio',  color: '#fde68a' },
-  { label: 'Alto',   color: '#fca5a5' },
-];
-
-function HeatLegend({ min, max }: { min: number; max: number }) {
-  return (
-    <div className="glass-card rounded-xl p-4 border border-outline-variant">
-      <div className="flex items-center gap-2 mb-3">
-        <Thermometer className="w-3.5 h-3.5 text-primary" />
-        <p className="text-[10px] font-bold text-on-surface-variant uppercase tracking-wider">
-          Escala de Calor — Consumo m³/s
-        </p>
-      </div>
-      <div
-        className="h-3 rounded-full w-full mb-2"
-        style={{ background: 'linear-gradient(90deg, #bbf7d0 0%, #fef9c3 40%, #fde68a 70%, #fca5a5 100%)' }}
-      />
-      <div className="flex justify-between text-[9px] font-bold text-on-surface-variant">
-        <span>{min} m³/s</span>
-        <span style={{ color: '#fde68a' }}>Medio</span>
-        <span style={{ color: '#fca5a5' }}>{max} m³/s</span>
-      </div>
-      <div className="flex gap-4 mt-3 flex-wrap">
-        {LEGEND_STOPS.map(s => (
-          <div key={s.label} className="flex items-center gap-1.5">
-            <div className="w-3 h-3 rounded-sm" style={{ background: s.color }} />
-            <span className="text-[9px] text-on-surface-variant font-medium">{s.label}</span>
-          </div>
-        ))}
-      </div>
-    </div>
-  );
+interface HoverState {
+  x: number;
+  y: number;
+  zone: ZonePath;
+  row: HeatmapZoneRow | null;
+  distritoNombre: string;
 }
 
-function DistrictPanel({ district, loading }: { district: DistritoMetrics | null; loading: boolean }) {
-  if (loading) return (
-    <div className="glass-card rounded-xl p-8 flex items-center justify-center border border-outline-variant">
-      <div className="flex flex-col items-center gap-3">
-        <div className="w-8 h-8 border-2 border-primary/20 border-t-primary rounded-full animate-spin" />
-        <p className="text-xs text-on-surface-variant">Consultando Cassandra…</p>
-      </div>
-    </div>
-  );
+function fmtNumber(value: number): string {
+  return Number(value ?? 0).toLocaleString('es-BO', {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  });
+}
 
-  if (!district) return (
-    <div className="glass-card rounded-xl p-8 flex flex-col items-center justify-center border border-outline-variant gap-3 text-center min-h-[180px]">
-      <div className="w-10 h-10 rounded-full bg-primary/10 flex items-center justify-center">
-        <MapPin className="w-5 h-5 text-primary" />
-      </div>
-      <div>
-        <p className="text-sm font-bold text-on-surface">Selecciona un distrito</p>
-        <p className="text-xs text-on-surface-variant mt-1 opacity-70">Haz clic en cualquier zona del mapa</p>
-      </div>
-    </div>
-  );
+function normalizeText(value: string): string {
+  return value
+    .replace(/ÃƒÂ‘|Ã‘|Ñ/g, 'N')
+    .replace(/ÃƒÂ“|Ã“|Ó/g, 'O')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^A-Z0-9]+/gi, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .toUpperCase();
+}
 
-  const st = STATUS_CFG[district.status];
-  const boundary = getDistritoById(district.id);
-  const comuna = getComunaByDistritoId(district.id);
-  const medPct = district.medidoresTotal > 0 ? (district.medidoresActivos / district.medidoresTotal) * 100 : 0;
+function lerp(a: number, b: number, t: number): number {
+  return Math.round(a + (b - a) * t);
+}
 
+function mix(a: [number, number, number], b: [number, number, number], t: number): string {
+  return `rgb(${lerp(a[0], b[0], t)}, ${lerp(a[1], b[1], t)}, ${lerp(a[2], b[2], t)})`;
+}
+
+function heatColor(value: number | null, min: number, max: number): string {
+  if (value == null) return '#d8dee9';
+  const ratio = max === min ? 0.5 : Math.max(0, Math.min(1, (value - min) / (max - min)));
+  if (ratio < 0.5) {
+    return mix([22, 163, 74], [250, 204, 21], ratio * 2);
+  }
+  return mix([250, 204, 21], [220, 38, 38], (ratio - 0.5) * 2);
+}
+
+function readableStroke(value: number | null, min: number, max: number): string {
+  if (value == null) return '#94a3b8';
+  const ratio = max === min ? 0.5 : (value - min) / (max - min);
+  return ratio > 0.62 ? '#7f1d1d' : '#14532d';
+}
+
+function buildDistrictName(row: HeatmapZoneRow | null | undefined, districtId: number): string {
+  const id = row?.distrito_id ?? districtId;
+  const boundary = getDistritoById(id);
+  if (boundary) return boundary.nombre;
+  return getDistritoById(districtId)?.nombre ?? `Distrito ${districtId}`;
+}
+
+function HoverTooltip({ hover }: { hover: HoverState | null }) {
+  if (!hover) return null;
+
+  const comuna = getComunaByDistritoId(hover.zone.districtId);
   return (
     <div
-      className="glass-card rounded-xl border border-outline-variant overflow-hidden"
-      style={{
-        animation: 'panelSlideIn 0.28s ease-out both',
-        borderLeft: `3px solid ${comuna?.color ?? 'transparent'}`,
-      }}
+      className="pointer-events-none fixed z-50 rounded-xl border border-outline-variant bg-surface-container-high/95 px-4 py-3 shadow-xl backdrop-blur"
+      style={{ left: hover.x + 16, top: hover.y - 18, minWidth: 220 }}
     >
-      {comuna && (
-        <div style={{ height: 3, background: `linear-gradient(90deg, ${comuna.color} 0%, ${comuna.color}30 100%)` }} />
-      )}
-      <div className="p-5 overflow-y-auto max-h-[540px]">
-        <div className="flex items-start justify-between mb-4 gap-3">
-          <div className="min-w-0">
-            {comuna && (
-              <span
-                className="text-[9px] font-bold px-2 py-0.5 rounded mb-1.5 inline-block tracking-wider"
-                style={{ background: `${comuna.color}20`, color: comuna.color, border: `1px solid ${comuna.color}40` }}
-              >
-                {comuna.nombre.toUpperCase()}
-              </span>
-            )}
-            <h3 className="text-base font-bold text-on-surface leading-tight">{district.name}</h3>
-            <p className="text-[10px] text-on-surface-variant mt-0.5 opacity-70">Subalcaldía {district.subalcaldia}</p>
-          </div>
-          <span
-            className="text-[10px] font-bold px-2.5 py-1 rounded-full flex-shrink-0 mt-0.5"
-            style={{ background: st.bg, color: st.color, border: `1px solid ${st.color}30` }}
-          >
-            {st.label}
-          </span>
-        </div>
-
-        <div className="grid grid-cols-2 gap-2">
-          {[
-            { l:'Consumo',     v:`${district.consumoM3} m³/s`,               c: district.consumoM3 > 450 ? '#ef4444' : '#60a5fa' },
-            { l:'Presión',     v:`${district.presionPSI} PSI`,                c:'#22d3ee' },
-            { l:'Población',   v: district.poblacion.toLocaleString('es-BO'), c:'#34d399' },
-            { l:'Cobertura',   v:`${district.cobertura}%`,                    c:'#a78bfa' },
-            { l:'Calidad ICA', v:`${district.calidadICA}/100`,                c: district.calidadICA >= 80 ? '#34d399' : district.calidadICA >= 70 ? '#f59e0b' : '#ef4444' },
-            { l:'Temperatura', v:`${district.temperatura}°C`,                 c:'#f87171' },
-          ].map(({ l, v, c }) => (
-            <div
-              key={l}
-              className="relative rounded-lg p-2.5 overflow-hidden"
-              style={{ background: `${c}09`, border: `1px solid ${c}25` }}
-            >
-              <div className="absolute left-0 top-0 bottom-0 w-[3px] rounded-l-lg" style={{ background: `${c}cc` }} />
-              <p className="text-[9px] font-bold text-on-surface-variant uppercase tracking-wide mb-1.5 pl-1.5 opacity-70">{l}</p>
-              <p className="text-sm font-bold font-mono pl-1.5" style={{ color: c }}>{v}</p>
-            </div>
-          ))}
-        </div>
-
-        <div className="mt-4">
-          <div className="flex justify-between text-xs mb-1.5">
-            <span className="text-on-surface-variant opacity-80">Medidores activos</span>
-            <span className="font-bold text-on-surface tabular-nums">
-              {district.medidoresActivos.toLocaleString()} <span className="text-on-surface-variant font-normal">/</span> {district.medidoresTotal.toLocaleString()}
-            </span>
-          </div>
-          <div className="w-full bg-surface-container h-2 rounded-full overflow-hidden">
-            <div
-              className="h-full rounded-full transition-all duration-700"
-              style={{
-                width: `${medPct}%`,
-                background: medPct >= 95
-                  ? 'linear-gradient(90deg,#10b981,#34d399)'
-                  : medPct >= 88
-                    ? 'linear-gradient(90deg,#f59e0b,#fbbf24)'
-                    : 'linear-gradient(90deg,#ef4444,#f87171)',
-              }}
-            />
-          </div>
-          <p className="text-[9px] text-on-surface-variant mt-1 text-right opacity-60">{medPct.toFixed(1)}%</p>
-        </div>
-
-        {district.consumoM3 > 450 && (
-          <div className="mt-3 px-3 py-2 rounded-lg bg-error-container/20 border border-error/25 text-xs font-bold text-error flex items-center gap-2">
-            <span>⚠</span>
-            <span>Consumo excesivo — umbral ONU (&gt;45 m³/conexión/mes)</span>
-          </div>
+      <p className="text-sm font-bold text-on-surface leading-tight">{hover.zone.zoneName}</p>
+      <div className="mt-1 flex items-center gap-2 text-[10px] font-bold text-on-surface-variant">
+        <span>D{hover.zone.districtId}</span>
+        <span className="opacity-40">|</span>
+        <span>{comuna?.nombre ?? 'Sin comuna'}</span>
+      </div>
+      <p className="mt-2 text-xs text-on-surface-variant">{hover.distritoNombre}</p>
+      <div className="mt-3 rounded-lg bg-surface-container px-3 py-2">
+        <p className="text-[10px] font-bold uppercase tracking-wider text-on-surface-variant">Consumo real</p>
+        <p className="font-mono text-base font-extrabold text-on-surface">
+          {hover.row == null ? 'Sin dato' : `${fmtNumber(hover.row.consumo)} m3`}
+        </p>
+        {hover.row && (
+          <p className="mt-1 text-[10px] font-semibold text-on-surface-variant">
+            {hover.row.medidores.toLocaleString('es-BO')} medidores asociados
+          </p>
         )}
+      </div>
+    </div>
+  );
+}
 
-        {boundary && (
-          <div className="mt-4">
-            <p className="text-[10px] font-bold text-on-surface-variant uppercase tracking-wider mb-2 flex items-center gap-1.5">
-              <MapPin className="w-3 h-3" /> Zonas ({boundary.zonas.length})
-            </p>
-            <div className="space-y-1">
-              {boundary.zonas.map(z => (
-                <div key={z} className="flex items-center gap-2.5 text-xs text-on-surface-variant rounded-md px-2.5 py-1.5 hover:bg-surface-container-low/50 transition-colors">
-                  <div className="w-1.5 h-1.5 rounded-full flex-shrink-0" style={{ background: comuna?.color ?? '#6b7280', opacity: 0.8 }} />
-                  <span className="leading-tight">{z}</span>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
+function HeatLegend({ min, mid, max }: { min: number; mid: number; max: number }) {
+  return (
+    <div className="rounded-xl border border-outline-variant bg-surface-container-low p-4">
+      <div className="mb-3 flex items-center gap-2">
+        <Thermometer className="h-3.5 w-3.5 text-primary" />
+        <p className="text-[10px] font-bold uppercase tracking-wider text-on-surface-variant">
+          Escala por consumo mensual real
+        </p>
+      </div>
+      <div className="h-3 rounded-full bg-[linear-gradient(90deg,#16a34a_0%,#facc15_50%,#dc2626_100%)]" />
+      <div className="mt-2 grid grid-cols-3 text-[10px] font-bold text-on-surface-variant">
+        <span>Bajo: {fmtNumber(min)} m3</span>
+        <span className="text-center">Medio: {fmtNumber(mid)} m3</span>
+        <span className="text-right">Alto: {fmtNumber(max)} m3</span>
+      </div>
+      <div className="mt-3 flex items-center gap-2 text-[10px] text-on-surface-variant">
+        <span className="inline-block h-3 w-3 rounded-sm border border-outline-variant bg-[#d8dee9]" />
+        <span>Sin dato directo para el periodo o nombre de zona no asociado.</span>
       </div>
     </div>
   );
 }
 
 export default function MapaCalorSection() {
-  const [sel, setSel] = useState<number | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [distritos, setDistritos] = useState<DistritoMetrics[]>([]);
-  const [apiStatus, setApiStatus] = useState<'loading' | 'ready' | 'empty' | 'error'>('loading');
+  const [rows, setRows] = useState<HeatmapZoneRow[]>([]);
+  const [status, setStatus] = useState<ApiStatus>('loading');
+  const [hover, setHover] = useState<HoverState | null>(null);
+  const [selectedZoneId, setSelectedZoneId] = useState<string | null>(null);
 
   useEffect(() => {
-    api.distritos()
-      .then(rawList => {
-        if (rawList.length > 0) {
-          setDistritos(rawList.map(rawToDistrito));
-          setApiStatus('ready');
-        } else {
-          setApiStatus('empty');
-        }
+    let mounted = true;
+
+    fetch(`${API_BASE}/api/consultas/heatmap-zonas?periodo=${PERIOD}`)
+      .then((response) => {
+        if (!response.ok) throw new Error(`API ${response.status}`);
+        return response.json() as Promise<HeatmapResponse>;
       })
-      .catch(() => setApiStatus('error'));
+      .then((payload) => {
+        if (!mounted) return;
+        const usableRows = payload.data ?? [];
+        setRows(usableRows);
+        setStatus(usableRows.length > 0 ? 'ready' : 'empty');
+      })
+      .catch(() => {
+        if (mounted) setStatus('error');
+      });
+
+    return () => { mounted = false; };
   }, []);
 
-  const district = distritos.find(d => d.id === sel) ?? null;
+  const rowByZone = useMemo(() => {
+    const map = new Map<string, HeatmapZoneRow>();
+    rows.forEach((row) => map.set(row.zona_key || normalizeText(row.zona), row));
+    return map;
+  }, [rows]);
 
-  const handleSelect = useCallback((id: number | null) => {
-    if (id === null) { setSel(null); return; }
-    setLoading(true);
-    setSel(id);
-    setTimeout(() => setLoading(false), 280);
-  }, []);
+  const values = useMemo(
+    () => rows.map((row) => row.consumo).filter((value) => Number.isFinite(value)),
+    [rows],
+  );
 
-  const cMin = distritos.length ? Math.min(...distritos.map(d => d.consumoM3)) : 0;
-  const cMax = distritos.length ? Math.max(...distritos.map(d => d.consumoM3)) : 0;
+  const min = values.length ? Math.min(...values) : 0;
+  const max = values.length ? Math.max(...values) : 0;
+  const mid = values.length ? (min + max) / 2 : 0;
+
+  const rankedRows = useMemo(
+    () => [...rows].sort((a, b) => b.consumo - a.consumo),
+    [rows],
+  );
+
+  const selectedZone = selectedZoneId ? COCHABAMBA_ZONE_PATHS.find((zone) => zone.id === selectedZoneId) ?? null : null;
+  const selectedRow = selectedZone ? rowByZone.get(normalizeText(selectedZone.zoneName)) ?? null : null;
 
   return (
-    <section className="space-y-6 mt-8 pt-8 border-t border-outline-variant">
-      {/* Header */}
-      <div className="flex items-end justify-between">
+    <section className="mt-8 space-y-6 border-t border-outline-variant pt-8">
+      <div className="flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
         <div>
-          <span className="text-xs font-bold text-primary uppercase tracking-widest flex items-center gap-1.5">
-            <Thermometer className="w-3.5 h-3.5" /> Análisis Térmico
+          <span className="flex items-center gap-1.5 text-xs font-bold uppercase tracking-widest text-primary">
+            <Thermometer className="h-3.5 w-3.5" /> Analisis termico
           </span>
-          <h2 className="text-xl font-bold text-on-surface mt-0.5">Mapa de Calor — Consumo por Distrito</h2>
+          <h2 className="mt-0.5 text-xl font-bold text-on-surface">Mapa de calor SVG - Consumo real</h2>
           <p className="text-sm text-on-surface-variant">
-            Intensidad cromática proporcional al consumo m³/s · {distritos.length} distritos
+            Periodo {PERIOD} - colores calculados desde Cassandra por zona.
           </p>
         </div>
         <span
           className={cn(
-            'text-[10px] font-bold px-3 py-1.5 rounded-lg border',
-            apiStatus === 'ready'   ? 'bg-emerald-500/10 text-emerald-400 border-emerald-400/25' :
-            apiStatus === 'error'   ? 'bg-red-500/10 text-red-400 border-red-400/25' :
-            apiStatus === 'empty'   ? 'bg-amber-500/10 text-amber-400 border-amber-400/25' :
-            'bg-surface-container text-on-surface-variant border-outline-variant'
+            'w-fit rounded-lg border px-3 py-1.5 text-[10px] font-bold',
+            status === 'ready' ? 'border-emerald-400/25 bg-emerald-500/10 text-emerald-400' :
+            status === 'error' ? 'border-red-400/25 bg-red-500/10 text-red-400' :
+            status === 'empty' ? 'border-amber-400/25 bg-amber-500/10 text-amber-400' :
+            'border-outline-variant bg-surface-container text-on-surface-variant',
           )}
         >
-          {apiStatus === 'ready'   ? '● Cassandra'
-          : apiStatus === 'error'  ? '● Error de conexión'
-          : apiStatus === 'empty'  ? '● Sin datos en BD'
-          :                          '● Cargando…'}
+          {status === 'ready' ? 'Cassandra: consumo real' :
+           status === 'error' ? 'Error de API' :
+           status === 'empty' ? 'Sin datos' :
+           'Cargando datos'}
         </span>
       </div>
 
-      {/* Loading / empty / error */}
-      {apiStatus !== 'ready' && (
-        <div className="glass-card rounded-xl border border-outline-variant flex items-center justify-center" style={{ minHeight: 220 }}>
-          {apiStatus === 'loading' && (
-            <div className="flex flex-col items-center gap-3">
-              <div className="w-8 h-8 border-2 border-primary/20 border-t-primary rounded-full animate-spin" />
-              <p className="text-sm text-on-surface-variant">Consultando Cassandra…</p>
-            </div>
-          )}
-          {apiStatus === 'empty' && (
-            <div className="flex flex-col items-center gap-3 text-center px-8">
-              <div className="w-12 h-12 rounded-full bg-warning/10 flex items-center justify-center text-2xl">🗄️</div>
-              <p className="text-sm font-bold text-on-surface">Base de datos vacía</p>
-              <p className="text-xs text-on-surface-variant opacity-70">No hay distritos en Cassandra. Ejecuta el seeder.</p>
-            </div>
-          )}
-          {apiStatus === 'error' && (
-            <div className="flex flex-col items-center gap-3 text-center px-8">
-              <div className="w-12 h-12 rounded-full bg-error/10 flex items-center justify-center text-2xl">⚠️</div>
-              <p className="text-sm font-bold text-on-surface">Sin conexión al backend</p>
-              <p className="text-xs text-on-surface-variant opacity-70">Verifica que el contenedor API esté corriendo en el puerto 4000.</p>
-            </div>
-          )}
+      {status !== 'ready' && (
+        <div className="flex min-h-[260px] items-center justify-center rounded-xl border border-outline-variant bg-surface-container-low">
+          <div className="flex flex-col items-center gap-3 text-center">
+            <Database className="h-8 w-8 text-on-surface-variant" />
+            <p className="text-sm font-bold text-on-surface">
+              {status === 'loading' ? 'Consultando consumo por zona...' :
+               status === 'empty' ? 'No hay consumo para el periodo' :
+               'No se pudo consultar el backend'}
+            </p>
+            <p className="max-w-md text-xs text-on-surface-variant">
+              Endpoint usado: /api/consultas/heatmap-zonas?periodo={PERIOD}
+            </p>
+          </div>
         </div>
       )}
 
-      {/* Mapa de calor + panel lateral */}
-      {apiStatus === 'ready' && (
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-          {/* Mapa SVG locked en heatmap */}
-          <div className="lg:col-span-7 glass-card rounded-xl overflow-hidden border border-outline-variant flex flex-col">
-            <div className="px-5 py-3.5 border-b border-outline-variant flex items-center justify-between">
+      {status === 'ready' && (
+        <div className="grid grid-cols-1 gap-6 lg:grid-cols-12">
+          <div className="overflow-hidden rounded-xl border border-outline-variant bg-surface-container-low lg:col-span-8">
+            <div className="flex items-center justify-between border-b border-outline-variant px-5 py-3.5">
               <div>
-                <h3 className="text-sm font-bold text-on-surface">Mapa de Calor SVG — Cochabamba</h3>
+                <h3 className="text-sm font-bold text-on-surface">SVG Cochabamba coloreado por consumo</h3>
                 <p className="text-xs text-on-surface-variant">
-                  15 distritos · 54 zonas · paleta menta → ámbar → coral
+                  Cada path usa id, data-name y data-district para asociarse al consumo real.
                 </p>
               </div>
-              <div
-                className="text-[9px] font-bold px-2.5 py-1 rounded-full flex items-center gap-1"
-                style={{ background: 'rgba(245,158,11,0.12)', color: '#d97706', border: '1px solid rgba(245,158,11,0.3)' }}
+              <span className="rounded-full border border-primary/25 bg-primary/10 px-2.5 py-1 text-[9px] font-bold text-primary">
+                {rows.length} zonas con dato
+              </span>
+            </div>
+
+            <div className="relative h-[780px] min-h-[520px] bg-[radial-gradient(ellipse_80%_70%_at_50%_38%,#eef6ff_0%,#f8fbff_64%,#eef4ff_100%)]">
+              <svg
+                viewBox={`0 0 ${VIEWBOX_W} ${VIEWBOX_H}`}
+                preserveAspectRatio="xMidYMid meet"
+                className="h-full w-full"
+                role="img"
+                aria-label="Mapa de calor de consumo real por zona en Cochabamba"
               >
-                <Thermometer className="w-2.5 h-2.5" /> Heatmap activo
-              </div>
-            </div>
-            <div style={{ height: 860 }}>
-              <CochabambaMapV2
-                distritos={distritos}
-                selectedDistritoId={sel}
-                onSelectDistrito={handleSelect}
-                metric="consumo"
-                defaultViewMode="heatmap"
-                lockViewMode={true}
-                className="h-full"
-              />
+                <defs>
+                  <pattern id="heat-carto-grid" width="48" height="48" patternUnits="userSpaceOnUse">
+                    <path d="M 48 0 L 0 0 0 48" fill="none" stroke="#cbd5e1" strokeWidth="0.5" />
+                  </pattern>
+                </defs>
+                <rect x={0} y={0} width={VIEWBOX_W} height={VIEWBOX_H} fill="transparent" />
+                <rect x={0} y={0} width={VIEWBOX_W} height={VIEWBOX_H} fill="url(#heat-carto-grid)" opacity="0.35" />
+
+                {COCHABAMBA_ZONE_PATHS.map((zone) => {
+                  const row = rowByZone.get(normalizeText(zone.zoneName)) ?? null;
+                  const consumo = row?.consumo ?? null;
+                  const selected = selectedZoneId === zone.id;
+                  const dimmed = selectedZoneId != null && !selected;
+                  const fill = heatColor(consumo, min, max);
+                  const stroke = selected ? '#111827' : readableStroke(consumo, min, max);
+                  const districtName = buildDistrictName(row, zone.districtId);
+
+                  return (
+                    <path
+                      key={zone.id}
+                      id={zone.id}
+                      data-name={zone.zoneName}
+                      data-district={zone.districtId}
+                      data-consumo={consumo ?? undefined}
+                      d={zone.d}
+                      fill={fill}
+                      fillOpacity={dimmed ? 0.36 : 0.92}
+                      stroke={stroke}
+                      strokeWidth={selected ? 2.6 : 0.8}
+                      strokeLinejoin="round"
+                      style={{
+                        cursor: 'pointer',
+                        filter: selected ? 'drop-shadow(0 4px 10px rgba(17,24,39,0.35)) brightness(1.04)' : 'none',
+                        transition: 'fill 220ms ease, fill-opacity 180ms ease, stroke-width 160ms ease, filter 160ms ease',
+                      }}
+                      onMouseEnter={(event) => setHover({
+                        x: event.clientX,
+                        y: event.clientY,
+                        zone,
+                        row,
+                        distritoNombre: districtName,
+                      })}
+                      onMouseMove={(event) => setHover((current) => current ? { ...current, x: event.clientX, y: event.clientY } : current)}
+                      onMouseLeave={() => setHover(null)}
+                      onClick={() => setSelectedZoneId((current) => current === zone.id ? null : zone.id)}
+                    >
+                      <title>{`${zone.zoneName} - ${districtName} - ${consumo == null ? 'sin dato' : `${fmtNumber(consumo)} m3`}`}</title>
+                    </path>
+                  );
+                })}
+
+                {DISTRITO_BOUNDARIES.map((district) => {
+                  const hasRows = rows.some((row) => row.distrito_id === district.id);
+                  const selected = selectedZone?.districtId === district.id;
+                  return (
+                    <text
+                      key={`label-${district.id}`}
+                      x={district.centroid[0]}
+                      y={district.centroid[1]}
+                      textAnchor="middle"
+                      dominantBaseline="middle"
+                      fontSize={selected ? 20 : 14}
+                      fontFamily="'Inter', system-ui, sans-serif"
+                      fontWeight={selected ? 900 : 800}
+                      fill={hasRows ? '#0f172a' : '#64748b'}
+                      stroke="rgba(255,255,255,0.92)"
+                      strokeWidth={selected ? 5 : 4}
+                      paintOrder="stroke fill"
+                      style={{ pointerEvents: 'none', userSelect: 'none' }}
+                    >
+                      D{district.id}
+                    </text>
+                  );
+                })}
+              </svg>
+              <HoverTooltip hover={hover} />
             </div>
           </div>
 
-          {/* Panel lateral */}
-          <div className="lg:col-span-5 flex flex-col gap-4">
-            <DistrictPanel district={district} loading={loading} />
-
-            {/* Ranking consumo */}
-            <div className="glass-card rounded-xl p-5 border border-outline-variant">
-              <p className="text-[10px] font-bold text-on-surface-variant uppercase tracking-wider mb-3">
-                Ranking Consumo m³/s
+          <aside className="space-y-4 lg:col-span-4">
+            <div className="rounded-xl border border-outline-variant bg-surface-container-low p-5">
+              <p className="text-[10px] font-bold uppercase tracking-wider text-on-surface-variant">
+                Zona seleccionada
               </p>
-              <div className="space-y-2">
-                {[...distritos]
-                  .sort((a, b) => b.consumoM3 - a.consumoM3)
-                  .slice(0, 7)
-                  .map((d, i) => {
-                    const pct = cMax > 0 ? (d.consumoM3 / cMax) * 100 : 0;
-                    const barColor = pct > 75 ? '#fca5a5' : pct > 50 ? '#fde68a' : pct > 25 ? '#fef9c3' : '#bbf7d0';
-                    return (
-                      <div
-                        key={d.id}
-                        className="flex items-center gap-2 cursor-pointer hover:opacity-80 transition-opacity"
-                        onClick={() => handleSelect(d.id)}
-                      >
-                        <span className="text-[10px] font-bold w-5 text-on-surface-variant text-right">{i + 1}</span>
-                        <span className="text-[10px] font-bold w-6 text-on-surface-variant">D{d.id}</span>
-                        <div className="flex-1 bg-surface-container h-2 rounded-full overflow-hidden">
-                          <div
-                            className="h-full rounded-full transition-all duration-500"
-                            style={{ width: `${pct}%`, background: barColor }}
+              {selectedZone == null ? (
+                <div className="mt-4 flex items-center gap-3 text-sm text-on-surface-variant">
+                  <MapPin className="h-4 w-4" />
+                  Haz clic en una zona del SVG.
+                </div>
+              ) : (
+                <div className="mt-4 space-y-3">
+                  <div>
+                    <p className="text-lg font-extrabold text-on-surface">{selectedZone.zoneName}</p>
+                    <p className="text-sm font-bold text-on-surface">{buildDistrictName(selectedRow, selectedZone.districtId)}</p>
+                  </div>
+                  <div className="rounded-lg bg-surface-container px-3 py-2">
+                    <p className="text-[10px] font-bold uppercase tracking-wider text-on-surface-variant">Consumo total</p>
+                    <p className="font-mono text-xl font-extrabold text-on-surface">
+                      {selectedRow ? `${fmtNumber(selectedRow.consumo)} m3` : 'Sin dato'}
+                    </p>
+                    {selectedRow && (
+                      <p className="mt-1 text-[10px] font-semibold text-on-surface-variant">
+                        {selectedRow.medidores.toLocaleString('es-BO')} medidores asociados
+                      </p>
+                    )}
+                  </div>
+                  <div className="flex flex-wrap gap-1.5">
+                    <span className="rounded-md border border-outline-variant bg-surface-container px-2 py-1 text-[10px] font-semibold text-on-surface-variant">
+                      path id: {selectedZone.id}
+                    </span>
+                    <span className="rounded-md border border-outline-variant bg-surface-container px-2 py-1 text-[10px] font-semibold text-on-surface-variant">
+                      data-district: {selectedZone.districtId}
+                    </span>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            <div className="rounded-xl border border-outline-variant bg-surface-container-low p-5">
+              <p className="text-[10px] font-bold uppercase tracking-wider text-on-surface-variant">
+                Ranking consumo por zona {PERIOD}
+              </p>
+              <div className="mt-4 space-y-2">
+                {rankedRows.slice(0, 8).map((row, index) => {
+                  const pct = max > 0 ? (row.consumo / max) * 100 : 0;
+                  return (
+                    <button
+                      key={row.zona_key}
+                      type="button"
+                      onClick={() => {
+                        const zone = COCHABAMBA_ZONE_PATHS.find((path) => normalizeText(path.zoneName) === row.zona_key);
+                        if (zone) setSelectedZoneId(zone.id);
+                      }}
+                      className="grid w-full grid-cols-[24px_1fr_88px] items-center gap-2 rounded-lg px-2 py-1.5 text-left transition-colors hover:bg-surface-container"
+                    >
+                      <span className="text-right text-[10px] font-bold text-on-surface-variant">{index + 1}</span>
+                      <span className="min-w-0">
+                        <span className="block truncate text-xs font-bold text-on-surface">{row.zona}</span>
+                        <span className="mt-1 block h-2 rounded-full bg-surface-container-high">
+                          <span
+                            className="block h-2 rounded-full"
+                            style={{ width: `${pct}%`, background: heatColor(row.consumo, min, max) }}
                           />
-                        </div>
-                        <span className="text-xs font-bold font-mono text-on-surface w-16 text-right">
-                          {d.consumoM3} m³/s
                         </span>
-                      </div>
-                    );
-                  })}
+                      </span>
+                      <span className="text-right font-mono text-xs font-bold text-on-surface">
+                        {fmtNumber(row.consumo)}
+                      </span>
+                    </button>
+                  );
+                })}
               </div>
             </div>
-          </div>
+
+            <HeatLegend min={min} mid={mid} max={max} />
+
+            <div className="rounded-xl border border-outline-variant bg-surface-container-low p-4">
+              <p className="text-[10px] font-bold uppercase tracking-wider text-on-surface-variant">Comunas</p>
+              <div className="mt-3 flex flex-wrap gap-2">
+                {COMUNAS.map((comuna) => (
+                  <span key={comuna.id} className="rounded-md border border-outline-variant bg-surface-container px-2 py-1 text-[10px] font-semibold text-on-surface-variant">
+                    {comuna.nombre}
+                  </span>
+                ))}
+              </div>
+            </div>
+          </aside>
         </div>
       )}
-
-      {/* Leyenda de calor */}
-      {apiStatus === 'ready' && <HeatLegend min={cMin} max={cMax} />}
     </section>
   );
 }

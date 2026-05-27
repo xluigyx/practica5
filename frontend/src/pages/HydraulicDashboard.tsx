@@ -20,21 +20,29 @@ function toStatus(s: string | null, fallback: StatusDistrito): StatusDistrito {
   return (s && VALID_STATUS.includes(s as StatusDistrito)) ? s as StatusDistrito : fallback;
 }
 
+function round2(value: number | null | undefined): number {
+  return Number(Number(value ?? 0).toFixed(2));
+}
+
+function fmt2(value: number): string {
+  return Number(value ?? 0).toLocaleString('es-BO', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
 function rawToDistrito(raw: DistritoRaw): DistritoMetrics {
   const total  = raw.medidores_total ?? 0;
-  const cobert = raw.cobertura_pct   ?? 0;
+  const cobert = round2(raw.cobertura_pct);
   return {
     id:               raw.id,
     name:             raw.nombre,
     subalcaldia:      raw.subalcaldia,
-    consumoM3:        raw.consumo_m3    ?? 0,
-    presionPSI:       raw.presion_psi   ?? 0,
+    consumoM3:        round2(raw.consumo_m3),
+    presionPSI:       round2(raw.presion_psi),
     poblacion:        raw.poblacion     ?? 0,
     medidoresTotal:   total,
     medidoresActivos: Math.round(total * cobert / 100),
     cobertura:        cobert,
     calidadICA:       raw.calidad_ica   ?? 0,
-    temperatura:      raw.temperatura_c ?? 0,
+    temperatura:      round2(raw.temperatura_c),
     status:           toStatus(raw.status, 'normal'),
   } as DistritoMetrics;
 }
@@ -108,7 +116,7 @@ const DarkTip = ({ active, payload, label }: any) => {
       <p className="font-bold text-on-surface-variant mb-2 text-[10px] uppercase tracking-wide">{label}</p>
       {payload.map((p: any, i: number) => (
         <p key={i} style={{ color:p.color }} className="font-semibold mt-0.5">
-          {p.name}: <span className="text-on-surface">{p.value?.toLocaleString?.()}</span>
+          {p.name}: <span className="text-on-surface">{typeof p.value === 'number' ? fmt2(p.value) : p.value}</span>
         </p>
       ))}
     </div>
@@ -230,9 +238,9 @@ function ConsultasAnalíticasSection() {
                     <tr key={i}>
                       <td className="px-5 py-2.5 font-mono font-bold text-primary">{r.contrato}</td>
                       <td className="px-5 py-2.5 text-on-surface-variant">{r.tarifa}</td>
-                      <td className="px-5 py-2.5 font-mono font-bold text-red-500 text-right">{r.consumo_m3}</td>
+                      <td className="px-5 py-2.5 font-mono font-bold text-red-500 text-right">{fmt2(r.consumo_m3)}</td>
                       <td className="px-5 py-2.5 font-bold text-right" style={{color:r.exceso_pct>50?'#dc2626':'#d97706'}}>
-                        +{r.exceso_pct}%
+                        +{fmt2(r.exceso_pct)}%
                       </td>
                     </tr>
                   ))}
@@ -290,7 +298,7 @@ export default function HydraulicDashboard() {
 
   const KPIs = [
     { label:'Población Beneficiaria', value: apiStatus==='ready' ? totalPoblacion.toLocaleString() : '—', icon:Users,         color:'#3b82f6' },
-    { label:'Consumo Total Ciudad',   value: apiStatus==='ready' ? `${totalConsumo.toLocaleString()} m³/s` : '—', icon:Droplets, color:'#06b6d4' },
+    { label:'Consumo Total Ciudad',   value: apiStatus==='ready' ? `${fmt2(totalConsumo)} m³/s` : '—', icon:Droplets, color:'#06b6d4' },
     { label:'Medidores Activos',      value: medActivos > 0 ? medActivos.toLocaleString() : '—', icon:Activity,    color:'#10b981' },
     { label:'Alertas Críticas',       value: apiStatus==='ready' ? String(alertasCriticas) : '—', icon:AlertTriangle, color:'#ef4444' },
   ];
@@ -417,12 +425,12 @@ export default function HydraulicDashboard() {
                 </div>
                 <div className="grid grid-cols-2 gap-2.5">
                   {[
-                    {l:'Consumo',    v:`${district.consumoM3} m³/s`,  c:district.consumoM3>450?'#ef4444':'#60a5fa'},
-                    {l:'Presión',    v:`${district.presionPSI} PSI`,   c:'#22d3ee'},
+                    {l:'Consumo',    v:`${fmt2(district.consumoM3)} m³/s`,  c:district.consumoM3>450?'#ef4444':'#60a5fa'},
+                    {l:'Presión',    v:`${fmt2(district.presionPSI)} PSI`,   c:'#22d3ee'},
                     {l:'Población',  v:district.poblacion.toLocaleString(), c:'#34d399'},
-                    {l:'Cobertura',  v:`${district.cobertura}%`,       c:'#a78bfa'},
+                    {l:'Cobertura',  v:`${fmt2(district.cobertura)}%`,       c:'#a78bfa'},
                     {l:'Calidad ICA',v:`${district.calidadICA}/100`,   c:district.calidadICA>=80?'#34d399':'#f59e0b'},
-                    {l:'Temperatura',v:`${district.temperatura}°C`,    c:'#f87171'},
+                    {l:'Temperatura',v:`${fmt2(district.temperatura)}°C`,    c:'#f87171'},
                   ].map(({l,v,c}) => (
                     <div key={l} className="relative rounded-xl p-3 overflow-hidden" style={{background:`${c}08`,border:`1px solid ${c}20`}}>
                       <div className="absolute left-0 top-0 bottom-0 w-[3px] rounded-l-xl" style={{background:`${c}aa`}}/>
@@ -467,7 +475,7 @@ export default function HydraulicDashboard() {
                           <div className="h-full rounded-full transition-all duration-500 group-hover:opacity-90"
                             style={{width:`${maxC>0?(d.consumoM3/maxC)*100:0}%`,background:d.id===sel?'#3b82f6':STATUS_CFG[d.status].color}}/>
                         </div>
-                        <span className="text-xs font-bold font-mono text-on-surface w-16 text-right">{d.consumoM3} m³/s</span>
+                        <span className="text-xs font-bold font-mono text-on-surface w-16 text-right">{fmt2(d.consumoM3)} m³/s</span>
                       </div>
                     );
                   })}
@@ -581,17 +589,17 @@ export default function HydraulicDashboard() {
                       <td className="px-5 py-3 font-bold text-sm text-primary">{d.name}</td>
                       <td className="px-5 py-3 text-sm text-on-surface-variant">{d.subalcaldia}</td>
                       <td className="px-5 py-3">
-                        <span className={cn('text-sm font-bold font-mono',d.consumoM3>450?'text-error':'text-on-surface')}>{d.consumoM3}</span>
+                        <span className={cn('text-sm font-bold font-mono',d.consumoM3>450?'text-error':'text-on-surface')}>{fmt2(d.consumoM3)}</span>
                         {d.consumoM3>450&&<span className="ml-2 text-[9px] font-bold chip-red px-1.5 py-0.5 rounded-full">ONU</span>}
                       </td>
-                      <td className="px-5 py-3 text-sm text-on-surface-variant font-mono">{d.presionPSI}</td>
+                      <td className="px-5 py-3 text-sm text-on-surface-variant font-mono">{fmt2(d.presionPSI)}</td>
                       <td className="px-5 py-3 text-sm text-on-surface-variant">{d.poblacion.toLocaleString()}</td>
                       <td className="px-5 py-3">
                         <div className="flex items-center gap-2">
                           <div className="w-14 bg-surface-container h-1.5 rounded-full overflow-hidden">
                             <div className="h-full rounded-full bg-primary" style={{width:`${d.cobertura}%`}}/>
                           </div>
-                          <span className="text-xs font-bold text-on-surface">{d.cobertura}%</span>
+                          <span className="text-xs font-bold text-on-surface">{fmt2(d.cobertura)}%</span>
                         </div>
                       </td>
                       <td className="px-5 py-3 font-bold text-sm" style={{color:d.calidadICA>=80?'#059669':d.calidadICA>=70?'#d97706':'#dc2626'}}>{d.calidadICA}</td>
